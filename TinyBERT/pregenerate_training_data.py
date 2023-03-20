@@ -27,9 +27,13 @@ from multiprocessing import Pool
 
 import numpy as np
 from random import random, randrange, randint, shuffle, choice
+from transformers import AutoModel, AutoTokenizer, AutoConfig
 
-from transformer.tokenization import BertTokenizer
-
+# local imports
+try:
+    from transformers import BertTokenizer, BertConfig, BertModel
+except ImportError:
+    from .transformer import BertTokenizer, BertConfig, BertModel
 
 # This is used for running on Huawei Cloud.
 oncloud = True
@@ -50,8 +54,8 @@ class DocumentDatabase:
             self.temp_dir = TemporaryDirectory()
             self.working_dir = Path(self.temp_dir.name)
             self.document_shelf_filepath = self.working_dir / 'shelf.db'
-            self.document_shelf = shelve.open('/cache/shelf.db',
-                                              flag='n', protocol=-1)
+            shelf_space=os.path.join(self.working_dir, 'shelf.db')
+            self.document_shelf = shelve.open(shelf_space,flag='n', protocol=-1) #('/cache/shelf.db',flag='c', protocol=-1)
             self.documents = None
         else:
             self.documents = []
@@ -251,7 +255,7 @@ def create_instances_from_document(
                 tokens_b = []
 
                 # Random next
-                if bi_text and (len(current_chunk) == 1 or random() < 0.5) :
+                if bi_text and (len(current_chunk) == 1 or random() < 0.5):
                     is_random_next = True
                     target_b_length = target_seq_length - len(tokens_a)
 
@@ -333,9 +337,9 @@ def create_training_file(docs, vocab_list, args, epoch_num, bi_text=True):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--train_corpus', type=Path, required=True)
-    parser.add_argument("--output_dir", type=Path, required=True)
-    parser.add_argument("--bert_model", type=str, required=True)
+    parser.add_argument('--train_corpus', type=Path, default=Path("data/dewiki-20220201-clean.txt"))
+    parser.add_argument("--output_dir", type=Path, default=Path("data/pretraining_data"))
+    parser.add_argument("--bert_model", type=str, default="bert-base-uncased",)
     parser.add_argument("--do_lower_case", action="store_true")
     parser.add_argument("--do_whole_word_mask", action="store_true",
                         help="Whether to use whole word masking rather than per-WordPiece masking.")
@@ -360,12 +364,13 @@ def main():
 
     if args.num_workers > 1 and args.reduce_memory:
         raise ValueError("Cannot use multiple workers while reducing memory")
-
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
+    # training data is for the teacher model.
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     vocab_list = list(tokenizer.vocab.keys())
     doc_num = 0
     with DocumentDatabase(reduce_memory=args.reduce_memory) as docs:
-        with args.train_corpus.open() as f:
+        doc_path = Path(Path.joinpath(Path.cwd(),args.train_corpus))
+        with doc_path.open() as f:
             doc = []
             for line in tqdm(f, desc="Loading Dataset", unit=" lines"):
                 line = line.strip()
