@@ -34,8 +34,14 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
+import transformers
+from transformers import AutoConfig,BertModel
 
-from .file_utils import WEIGHTS_NAME, CONFIG_NAME
+#local imports
+try:
+    from file_utils import WEIGHTS_NAME, CONFIG_NAME, is_valid_file
+except ImportError:
+    from .file_utils import WEIGHTS_NAME, CONFIG_NAME, is_valid_file
 
 logger = logging.getLogger(__name__)
 
@@ -616,9 +622,9 @@ class BertPreTrainedModel(nn.Module):
 
     def __init__(self, config, *inputs, **kwargs):
         super(BertPreTrainedModel, self).__init__()
-        if not isinstance(config, BertConfig):
+        if not isinstance(config, transformers.BertConfig):
             raise ValueError(
-                "Parameter config in `{}(config)` should be an instance of class `BertConfig`. "
+                "Parameter config in `{}(config)` should be an instance of class `BertConfig` or AutoConfig. "
                 "To create a model from a Google pretrained model use "
                 "`model = {}.from_pretrained(PRETRAINED_MODEL_NAME)`".format(
                     self.__class__.__name__, self.__class__.__name__
@@ -643,9 +649,14 @@ class BertPreTrainedModel(nn.Module):
     def from_scratch(cls, pretrained_model_name_or_path, *inputs, **kwargs):
         resolved_config_file = os.path.join(
             pretrained_model_name_or_path, CONFIG_NAME)
-        config = BertConfig.from_json_file(resolved_config_file)
+        if is_valid_file(resolved_config_file):
+            config = BertConfig.from_json_file(resolved_config_file)
+        else:
+            # load the default from HF
+            config = AutoConfig.from_pretrained('huawei-noah/TinyBERT_General_4L_312D')
+            config.vocab_size = 31102
 
-        logger.info("Model config {}".format(config))
+
         model = cls(config, *inputs, **kwargs)
         return model
 
@@ -684,11 +695,24 @@ class BertPreTrainedModel(nn.Module):
 
         # Load config
         config_file = os.path.join(pretrained_model_name_or_path, CONFIG_NAME)
-        config = BertConfig.from_json_file(config_file)
-        logger.info("Model config {}".format(config))
+        if is_valid_file(config_file):
+            config = BertConfig.from_json_file(config_file)
+        else:
+            # load the default from HF
+            config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
+        logger.info("Model config".format(config))
         # Instantiate model.
 
-        model = cls(config, *inputs, **kwargs)
+        weights_path = os.path.join(pretrained_model_name_or_path, WEIGHTS_NAME)
+        if not is_valid_file(weights_path):
+            # create model with the default config from HF
+            model = cls(config, *inputs, **kwargs)
+            state_dict = model.state_dict()
+
+        else:
+           # load w/o pretrained weights
+            model = cls(config, *inputs, **kwargs)
+
         if state_dict is None and not from_tf:
             weights_path = os.path.join(
                 pretrained_model_name_or_path, WEIGHTS_NAME)

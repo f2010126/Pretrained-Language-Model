@@ -339,7 +339,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, default=Path("data/dewiki-20220201-clean.txt"))
     parser.add_argument("--output_dir", type=Path, default=Path("data/pretraining_data"))
-    parser.add_argument("--bert_model", type=str, default="bert-base-uncased",)
+    parser.add_argument("--bert_model", type=str, default="bert-base-german-dbmdz-cased",)
     parser.add_argument("--do_lower_case", action="store_true")
     parser.add_argument("--do_whole_word_mask", action="store_true",
                         help="Whether to use whole word masking rather than per-WordPiece masking.")

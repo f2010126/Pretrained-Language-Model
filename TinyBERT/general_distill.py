@@ -36,6 +36,7 @@ from torch.utils.data import (DataLoader, RandomSampler,Dataset)
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 from torch.nn import MSELoss
+from transformers import AutoTokenizer, AutoConfig, AutoModelForMaskedLM
 
 from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
 from transformer.modeling import TinyBertForPreTraining, BertModel
@@ -180,19 +181,16 @@ def main():
     # Required parameters
     parser.add_argument("--pregenerated_data",
                         type=Path,
-                        required=True)
+                        default=Path('data/pretraining_data'),)
     parser.add_argument("--teacher_model",
-                        default=None,
                         type=str,
-                        required=True)
+                        default="bert-base-german-dbmdz-cased")
     parser.add_argument("--student_model",
-                        default=None,
                         type=str,
-                        required=True)
+                        default="bert-base-german-dbmdz-cased")
     parser.add_argument("--output_dir",
-                        default=None,
                         type=str,
-                        required=True)
+                        default='models')
 
     # Other parameters
     parser.add_argument("--max_seq_length",
@@ -272,11 +270,14 @@ def main():
     args = parser.parse_args()
     logger.info('args:{}'.format(args))
 
+    # Load Data
+    data_path = Path(Path.joinpath(Path.cwd(), args.pregenerated_data))
     samples_per_epoch = []
     for i in range(int(args.num_train_epochs)):
-        epoch_file = args.pregenerated_data / "epoch_{}.json".format(i)
-        metrics_file = args.pregenerated_data / "epoch_{}_metrics.json".format(i)
+        epoch_file = data_path / "epoch_{}.json".format(i)
+        metrics_file = data_path / "epoch_{}_metrics.json".format(i)
         if epoch_file.is_file() and metrics_file.is_file():
+            # continue training?
             metrics = json.loads(metrics_file.read_text())
             samples_per_epoch.append(metrics['num_training_examples'])
         else:
@@ -323,7 +324,8 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
+    # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
+    tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
 
     total_train_examples = 0
     for i in range(int(args.num_train_epochs)):
