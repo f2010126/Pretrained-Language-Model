@@ -43,7 +43,6 @@ from transformer.modeling import TinyBertForPreTraining, BertModel
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
 
-csv.field_size_limit(sys.maxsize)
 
 # This is used for running on Huawei Cloud.
 oncloud = True
@@ -51,6 +50,7 @@ try:
     import moxing as mox
 except:
     oncloud = False
+csv.field_size_limit(sys.maxsize)
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -81,16 +81,16 @@ def convert_example_to_features(example, tokenizer, max_seq_length):
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
     masked_label_ids = tokenizer.convert_tokens_to_ids(masked_lm_labels)
 
-    input_array = np.zeros(max_seq_length, dtype=np.int)
+    input_array = np.zeros(max_seq_length, dtype=int)
     input_array[:len(input_ids)] = input_ids
 
-    mask_array = np.zeros(max_seq_length, dtype=np.bool)
+    mask_array = np.zeros(max_seq_length, dtype=bool)
     mask_array[:len(input_ids)] = 1
 
-    segment_array = np.zeros(max_seq_length, dtype=np.bool)
+    segment_array = np.zeros(max_seq_length, dtype=bool)
     segment_array[:len(segment_ids)] = segment_ids
 
-    lm_label_array = np.full(max_seq_length, dtype=np.int, fill_value=-1)
+    lm_label_array = np.full(max_seq_length, dtype=int, fill_value=-1)
     lm_label_array[masked_lm_positions] = masked_label_ids
 
     features = InputFeatures(input_ids=input_array,
@@ -136,10 +136,10 @@ class PregeneratedDataset(Dataset):
                                  shape=(num_samples,), mode='w+', dtype=np.bool)
         else:
             input_ids = np.zeros(shape=(num_samples, seq_len), dtype=np.int32)
-            input_masks = np.zeros(shape=(num_samples, seq_len), dtype=np.bool)
-            segment_ids = np.zeros(shape=(num_samples, seq_len), dtype=np.bool)
+            input_masks = np.zeros(shape=(num_samples, seq_len), dtype=bool)
+            segment_ids = np.zeros(shape=(num_samples, seq_len), dtype=bool)
             lm_label_ids = np.full(shape=(num_samples, seq_len), dtype=np.int32, fill_value=-1)
-            is_nexts = np.zeros(shape=(num_samples,), dtype=np.bool)
+            is_nexts = np.zeros(shape=(num_samples,), dtype=bool)
 
         logging.info("Loading training examples for epoch {}".format(epoch))
 
@@ -403,6 +403,8 @@ def main():
         nb_tr_examples, nb_tr_steps = 0, 0
         with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+                if step >10:
+                    break
                 batch = tuple(t.to(device) for t in batch)
 
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
@@ -492,12 +494,6 @@ def main():
                         model_to_save.config.to_json_file(output_config_file)
                         tokenizer.save_vocabulary(args.output_dir)
 
-                        if oncloud:
-                            logging.info(mox.file.list_directory(args.output_dir, recursive=True))
-                            logging.info(mox.file.list_directory('.', recursive=True))
-                            mox.file.copy_parallel(args.output_dir, args.data_url)
-                            mox.file.copy_parallel('.', args.data_url)
-
             model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
             logging.info("** ** * Saving fine-tuned model ** ** * ")
             model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
@@ -508,12 +504,6 @@ def main():
             torch.save(model_to_save.state_dict(), output_model_file)
             model_to_save.config.to_json_file(output_config_file)
             tokenizer.save_vocabulary(args.output_dir)
-
-            if oncloud:
-                logging.info(mox.file.list_directory(args.output_dir, recursive=True))
-                logging.info(mox.file.list_directory('.', recursive=True))
-                mox.file.copy_parallel(args.output_dir, args.data_url)
-                mox.file.copy_parallel('.', args.data_url)
 
 
 if __name__ == "__main__":
