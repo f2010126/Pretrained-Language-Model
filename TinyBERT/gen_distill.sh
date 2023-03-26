@@ -16,6 +16,5 @@ source ~/tinybert_nlp/bin/activate
 
 echo 'Run Generate Distill Data'
 cd $(ws_find zap_hpo_og)/TinyBert/TinyBERT
-srun python3
-
+srun python -m torch.distributed.launch --nproc_per_node=4 --nnodes=1 --node_rank=0 --master_addr="127.0.0.1" --master_port=1234 general_distill.py
 echo 'End of Script'

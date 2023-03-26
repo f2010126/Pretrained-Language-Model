@@ -26,6 +26,7 @@ import os
 import random
 import sys
 import json
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import numpy as np
 import torch
@@ -42,14 +43,16 @@ from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
 from transformer.modeling import TinyBertForPreTraining, BertModel
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
+import signal
+from torch.nn.parallel import DistributedDataParallel as DDP
 
+def handler(signum, frame):
+    print(f'Signal handler got signal Save Meeeee! {tokenizer} , {signum}')
+    # e.g. exit(0), or call your pytorch save routines
 
-# This is used for running on Huawei Cloud.
-oncloud = True
-try:
-    import moxing as mox
-except:
-    oncloud = False
+# enable the handler
+signal.signal(signal.SIGUSR1, handler)
+
 csv.field_size_limit(sys.maxsize)
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -236,9 +239,8 @@ def main():
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
     parser.add_argument("--no_cuda",
-                        action='store_true',
                         help="Whether not to use CUDA when available")
-    parser.add_argument("--local_rank",
+    parser.add_argument("--local-rank",
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")
@@ -268,7 +270,12 @@ def main():
                         default="")
 
     args = parser.parse_args()
-    logger.info('args:{}'.format(args))
+
+    # Folder creation before multiprocessing starts
+    if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
+        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
     # Load Data
     data_path = Path(Path.joinpath(Path.cwd(), args.pregenerated_data))
@@ -289,29 +296,16 @@ def main():
             break
     else:
         num_data_epochs = args.num_train_epochs
+    args.local_rank = int(os.environ["LOCAL_RANK"] ) if "LOCAL_RANK" in os.environ else -1
 
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        n_gpu = torch.cuda.device_count()
+        args.local_rank= 0
+        n_gpu = 1 # just one
     else:
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        n_gpu = 1
+        device = torch.device("cuda:{}".format(args.local_rank))
+        n_gpu = torch.cuda.device_count()
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.distributed.init_process_group(backend='nccl')
-
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
-
-    logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
-        device, n_gpu, bool(args.local_rank != -1), args.fp16))
-
-    if args.gradient_accumulation_steps < 1:
-        raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
-            args.gradient_accumulation_steps))
-
-    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -319,10 +313,25 @@ def main():
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    logging.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
+        device, n_gpu, bool(args.local_rank != -1), args.fp16))
+    if device.type == 'cuda':
+        torch.distributed.init_process_group(backend='nccl', world_size=n_gpu, rank=args.local_rank)
+    else:
+        torch.distributed.init_process_group(backend='gloo', init_method='env://', world_size=n_gpu, rank=0)
+
+
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
+            args.gradient_accumulation_steps))
+
+    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+    logging.info("  Train batch Size = %d", args.train_batch_size)
+    logging.info("  Grad Accumulation = %d", args.gradient_accumulation_steps)
 
     # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
     tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
@@ -330,12 +339,16 @@ def main():
     total_train_examples = 0
     for i in range(int(args.num_train_epochs)):
         # The modulo takes into account the fact that we may loop over limited epochs of data
+        logging.info("  Samples per ep = %d", samples_per_epoch[i % len(samples_per_epoch)])
         total_train_examples += samples_per_epoch[i % len(samples_per_epoch)]
+    logging.info("  Total train Examples = %d", total_train_examples)
 
     num_train_optimization_steps = int(
         total_train_examples / args.train_batch_size / args.gradient_accumulation_steps)
+    logging.info("  Train Opt steps Initial = %d", num_train_optimization_steps)
     if args.local_rank != -1:
         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
+    logging.info("  Train Opt steps Dist = %d", num_train_optimization_steps)
 
     if args.continue_train:
         student_model = TinyBertForPreTraining.from_pretrained(args.student_model)
@@ -347,22 +360,28 @@ def main():
     student_model.to(device)
     teacher_model.to(device)
 
-    if args.local_rank != -1:
-        try:
-            from apex.parallel import DistributedDataParallel as DDP
-        except ImportError:
-            raise ImportError(
-                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+    # if args.local_rank != -1:
+    #     try:
+    #         from torch.nn.parallel import DistributedDataParallel as DDP
+    #     except ImportError:
+    #         raise ImportError(
+    #             "DistributedDataParallel is not available, please install torch>=1.1.0")
+    #
+    #     teacher_model = DDP(teacher_model)
+    #     # Student isn't put on anything. Huh.
+    # elif n_gpu > 1:
+    #     # only used when training on multiple GPUs
+    #     student_model = torch.nn.DataParallel(student_model)
+    #     teacher_model = torch.nn.DataParallel(teacher_model)
 
-        teacher_model = DDP(teacher_model)
-    elif n_gpu > 1:
-        student_model = torch.nn.DataParallel(student_model)
-        teacher_model = torch.nn.DataParallel(teacher_model)
+    student_model = torch.nn.DataParallel(student_model,device_ids=[args.local_rank], output_device=args.local_rank)
+    teacher_model = torch.nn.DataParallel(teacher_model,device_ids=[args.local_rank], output_device=args.local_rank)
+
 
     size = 0
     for n, p in student_model.named_parameters():
-        logger.info('n: {}'.format(n))
-        logger.info('p: {}'.format(p.nelement()))
+        # logger.info('n: {}'.format(n))
+        # logger.info('p: {}'.format(p.nelement()))
         size += p.nelement()
 
     logger.info('Total parameters: {}'.format(size))
@@ -382,6 +401,7 @@ def main():
                          t_total=num_train_optimization_steps)
 
     global_step = 0
+    logger.info('args:{}'.format(args))
     logging.info("***** Running training *****")
     logging.info("  Num examples = {}".format(total_train_examples))
     logging.info("  Batch size = %d", args.train_batch_size)
@@ -403,7 +423,6 @@ def main():
         nb_tr_examples, nb_tr_steps = 0, 0
         with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-                if step >10:
                     break
                 batch = tuple(t.to(device) for t in batch)
 
