@@ -26,7 +26,7 @@ import os
 import random
 import sys
 import json
-from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 
 import numpy as np
 import torch
@@ -213,7 +213,7 @@ def main():
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--train_batch_size",
-                        default=32,
+                        default=128,
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
@@ -239,6 +239,7 @@ def main():
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
     parser.add_argument("--no_cuda",
+                        action='store_true',
                         help="Whether not to use CUDA when available")
     parser.add_argument("--local-rank",
                         type=int,
@@ -250,7 +251,7 @@ def main():
                         help="random seed for initialization")
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
-                        default=1,
+                        default=8,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--fp16',
                         action='store_true',
@@ -270,12 +271,6 @@ def main():
                         default="")
 
     args = parser.parse_args()
-
-    # Folder creation before multiprocessing starts
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
 
     # Load Data
     data_path = Path(Path.joinpath(Path.cwd(), args.pregenerated_data))
@@ -298,7 +293,16 @@ def main():
         num_data_epochs = args.num_train_epochs
     args.local_rank = int(os.environ["LOCAL_RANK"] ) if "LOCAL_RANK" in os.environ else -1
 
-    if args.local_rank == -1 or args.no_cuda:
+    # Folder creation in main process before multiprocessing starts
+    if args.local_rank ==0:
+        if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
+            logging.info(f"rank of device {args.local_rank}")
+            raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
+        if not os.path.exists(args.output_dir):
+            logging.info(f"rank of device {args.local_rank}")
+            os.makedirs(args.output_dir)
+
+    if args.local_rank == -1 and args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.local_rank= 0
         n_gpu = 1 # just one
@@ -374,8 +378,12 @@ def main():
     #     student_model = torch.nn.DataParallel(student_model)
     #     teacher_model = torch.nn.DataParallel(teacher_model)
 
-    student_model = torch.nn.DataParallel(student_model,device_ids=[args.local_rank], output_device=args.local_rank)
-    teacher_model = torch.nn.DataParallel(teacher_model,device_ids=[args.local_rank], output_device=args.local_rank)
+    # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
+    # Standard batch normalization only normalizes the data within each device (GPU). SyncBN normalizes the input within the whole mini-batch
+    student_model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
+    teacher_model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(teacher_model)
+    student_model = DDP(student_model,device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
+    teacher_model = DDP(teacher_model,device_ids=[args.local_rank], output_device=args.local_rank)
 
 
     size = 0
@@ -413,6 +421,7 @@ def main():
         if args.local_rank == -1:
             train_sampler = RandomSampler(epoch_dataset)
         else:
+            # distributed sampler for multi-gpu training
             train_sampler = DistributedSampler(epoch_dataset)
         train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
