@@ -48,20 +48,9 @@ from transformer.optimization import BertAdam
 import signal
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-
 # Initialize the distributed learning processes
 os.environ['CURL_CA_BUNDLE'] = ''
 
-# Utils for distributed training
-def ddp_setup(rank: int, world_size: int):
-    """
-   Args:
-       rank: Unique identifier of each process
-      world_size: Total number of processes
-   """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-    init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
 
 csv.field_size_limit(sys.maxsize)
@@ -188,12 +177,13 @@ class PregeneratedDataset(Dataset):
                 torch.tensor(int(self.is_nexts[item])))
 
 
-def main(rank,world_size, pregenerated_data, teacher_model, student_model, output_dir, max_seq_length,
+def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_length,
          reduce_memory, do_eval, do_lower_case, train_batch_size, eval_batch_size, learning_rate,
          weight_decay, num_train_epochs, warmup_proportion, no_cuda, local_rank, seed,
          gradient_accumulation_steps, fp16, continue_train, eval_step):
     # Multi-GPU setup
-    ddp_setup(rank, world_size)
+    init_process_group(backend="nccl")
+    local_rank = int(os.environ["LOCAL_RANK"])
 
     # Load Data
     data_path = Path(Path.joinpath(Path.cwd(), pregenerated_data))
@@ -279,24 +269,11 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
         student_model = TinyBertForPreTraining.from_scratch(student_model)
     teacher_model = BertModel.from_pretrained(teacher_model)
 
-    # student_model = TinyBertForPreTraining.from_scratch(args.student_model, fit_size=teacher_model.config.hidden_size)
-    # if args.local_rank != -1:
-    #     try:
-    #         from torch.nn.parallel import DistributedDataParallel as DDP
-    #     except ImportError:
-    #         raise ImportError(
-    #             "DistributedDataParallel is not available, please install torch>=1.1.0")
-    #
-    #     teacher_model = DDP(teacher_model)
-    #     # Student isn't put on anything. Huh.
-    # elif n_gpu > 1:
-    #     # only used when training on multiple GPUs
-    #     student_model = torch.nn.DataParallel(student_model)
-    #     teacher_model = torch.nn.DataParallel(teacher_model)
     student_model.to(device)
     teacher_model.to(device)
     # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
-    # Standard batch normalization only normalizes the data within each device (GPU). SyncBN normalizes the input within the whole mini-batch
+    # Standard batch normalization only normalizes the data within each device (GPU).
+    # SyncBN normalizes the input within the whole mini-batch
     student_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
     teacher_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(teacher_model)
     student_model = DDP(student_model, device_ids=[local_rank], output_device=local_rank,
@@ -326,6 +303,19 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
                          t_total=num_train_optimization_steps)
 
     global_step = 0
+    epochs_run= 0
+    snapshot_path ='models/checkpoint.pt'
+    if os.path.exists(snapshot_path):
+        print("Loading snapshot")
+        loc = f"cuda:{local_rank}"
+        snapshot = torch.load(snapshot_path, map_location=loc)
+        student_model.load_state_dict(snapshot["student_model_state_dict"])
+        teacher_model.load_state_dict(snapshot["teacher_model_state_dict"])
+        epochs_run = snapshot["epoch"]
+        global_step = snapshot["global_step"]
+        optimizer.load_state_dict(snapshot["optimizer_state_dict"])
+        print(f"Resuming training from snapshot at Epoch {epochs_run}")
+
     logger.info('args:{}'.format(args))
     logging.info("***** Running training *****")
     logging.info("  Num examples = {}".format(total_train_examples))
@@ -333,7 +323,7 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
     logging.info("  Num steps = %d", num_train_optimization_steps)
 
     # General Distillation
-    for epoch in trange(int(num_train_epochs), desc="Epoch"):
+    for epoch in trange(epochs_run ,int(num_train_epochs), desc="Epoch"):
         epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=pregenerated_data, tokenizer=tokenizer,
                                             num_data_epochs=num_data_epochs, reduce_memory=reduce_memory)
         if local_rank == -1:
@@ -358,7 +348,7 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
                 batch = tuple(t.to(device) for t in batch)
 
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
-                # print(f'Rank {args.local_rank} input_ids ----------->: {input_ids}')
+
                 if input_ids.size()[0] != train_batch_size:
                     continue
 
@@ -458,7 +448,6 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
                             }, ckpt_path)
                             output_optimizer_file = os.path.join(output_dir, "optimizer.pt")
                             torch.save(optimizer.state_dict(), output_optimizer_file)
-
 
             # Save a trained model only for master process
             if local_rank == 0:
@@ -565,12 +554,8 @@ if __name__ == "__main__":
                         default=1000)
 
     args = parser.parse_args()
-    world_size = torch.cuda.device_count()
-    mp.spawn(main, args=(world_size, args.pregenerated_data, args.teacher_model, args.student_model, args.output_dir,
-                         args.max_seq_length, args.reduce_memory, args.do_eval, args.do_lower_case,
-                         args.train_batch_size,
-                         args.eval_batch_size, args.learning_rate, args.weight_decay, args.num_train_epochs,
-                         args.warmup_proportion,
-                         args.no_cuda, args.local_rank, args.seed, args.gradient_accumulation_steps, args.fp16,
-                         args.continue_train,
-                         args.eval_step), nprocs=world_size)
+    main(args.pregenerated_data, args.teacher_model, args.student_model, args.output_dir,
+         args.max_seq_length, args.reduce_memory, args.do_eval, args.do_lower_case,
+         args.train_batch_size, args.eval_batch_size, args.learning_rate,
+         args.weight_decay, args.num_train_epochs, args.warmup_proportion, args.no_cuda,
+         args.local_rank, args.seed, args.gradient_accumulation_steps, args.fp16, args.continue_train, args.eval_step)
