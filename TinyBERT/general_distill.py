@@ -446,6 +446,20 @@ def main(rank,world_size, pregenerated_data, teacher_model, student_model, outpu
                         model_to_save.config.to_json_file(output_config_file)
                         tokenizer.save_vocabulary(output_dir)
 
+                        if local_rank == 0:
+                            # Save everything in only main process
+                            ckpt_path = "models/checkpoint.pt"
+                            torch.save({
+                                'global_step': global_step,
+                                'epoch': epoch,
+                                'student_model_state_dict': student_model.state_dict(),
+                                'teacher_model_state_dict': teacher_model.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                            }, ckpt_path)
+                            output_optimizer_file = os.path.join(output_dir, "optimizer.pt")
+                            torch.save(optimizer.state_dict(), output_optimizer_file)
+
+
             # Save a trained model only for master process
             if local_rank == 0:
                 model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
