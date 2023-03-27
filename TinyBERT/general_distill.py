@@ -249,9 +249,10 @@ def main():
                         type=int,
                         default=42,
                         help="random seed for initialization")
+    # 4 GPUS use 8 as gradient accumulation steps, 8 GPUS use 16 as gradient accumulation steps
     parser.add_argument('--gradient_accumulation_steps',
-                        type=int,
                         default=8,
+                        type=int,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--fp16',
                         action='store_true',
@@ -361,9 +362,6 @@ def main():
     teacher_model = BertModel.from_pretrained(args.teacher_model)
 
     # student_model = TinyBertForPreTraining.from_scratch(args.student_model, fit_size=teacher_model.config.hidden_size)
-    student_model.to(device)
-    teacher_model.to(device)
-
     # if args.local_rank != -1:
     #     try:
     #         from torch.nn.parallel import DistributedDataParallel as DDP
@@ -377,7 +375,8 @@ def main():
     #     # only used when training on multiple GPUs
     #     student_model = torch.nn.DataParallel(student_model)
     #     teacher_model = torch.nn.DataParallel(teacher_model)
-
+    student_model.to(device)
+    teacher_model.to(device)
     # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
     # Standard batch normalization only normalizes the data within each device (GPU). SyncBN normalizes the input within the whole mini-batch
     student_model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
@@ -423,7 +422,7 @@ def main():
         else:
             # distributed sampler for multi-gpu training
             train_sampler = DistributedSampler(epoch_dataset)
-        train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+        train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=args.train_batch_size, shuffle=False,)
 
         tr_loss = 0.
         tr_att_loss = 0.
@@ -511,7 +510,7 @@ def main():
 
                         # Save a trained model
                         model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                        logging.info("** ** * Saving fine-tuned model ** ** * ")
+                        logging.info("** ** * Saving fine-tuned model Eval Step** ** * ")
                         # Only save the model it-self
                         model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
@@ -522,16 +521,18 @@ def main():
                         model_to_save.config.to_json_file(output_config_file)
                         tokenizer.save_vocabulary(args.output_dir)
 
-            model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-            logging.info("** ** * Saving fine-tuned model ** ** * ")
-            model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+            # Save a trained model only for master process
+            if args.local_rank == 0:
+                model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                logging.info("** ** * Saving fine-tuned model Final ** ** * ")
+                model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
-            output_model_file = os.path.join(args.output_dir, model_name)
-            output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                output_model_file = os.path.join(args.output_dir, model_name)
+                output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
 
-            torch.save(model_to_save.state_dict(), output_model_file)
-            model_to_save.config.to_json_file(output_config_file)
-            tokenizer.save_vocabulary(args.output_dir)
+                torch.save(model_to_save.state_dict(), output_model_file)
+                model_to_save.config.to_json_file(output_config_file)
+                tokenizer.save_vocabulary(args.output_dir)
 
 
 if __name__ == "__main__":

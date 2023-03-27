@@ -2,7 +2,7 @@
 #SBATCH --job-name=TinyGenDistill
 #SBATCH -p mlhiwidlc_gpu-rtx2080
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --time=00:04:00
 #SBATCH --signal=USR1@30
 #SBATCH --mail-user=dipti.sengupta@students.uni-freiburg.de
