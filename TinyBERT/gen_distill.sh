@@ -10,7 +10,7 @@
 #SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/tinyjob.out
 #SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/tinyjob.error
 
-
+export NCCL_DEBUG=INFO
 echo 'Activate Environment'
 source ~/tinybert_nlp/bin/activate
 

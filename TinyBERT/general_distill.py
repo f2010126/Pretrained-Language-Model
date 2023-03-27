@@ -51,8 +51,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 # Initialize the distributed learning processes
 os.environ['CURL_CA_BUNDLE'] = ''
 
-
-
 csv.field_size_limit(sys.maxsize)
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -303,8 +301,8 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                          t_total=num_train_optimization_steps)
 
     global_step = 0
-    epochs_run= 0
-    snapshot_path ='models/checkpoint.pt'
+    epochs_run = 0
+    snapshot_path = 'models/checkpoint.pt'
     if os.path.exists(snapshot_path):
         print("Loading snapshot")
         loc = f"cuda:{local_rank}"
@@ -323,7 +321,7 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
     logging.info("  Num steps = %d", num_train_optimization_steps)
 
     # General Distillation
-    for epoch in trange(epochs_run ,int(num_train_epochs), desc="Epoch"):
+    for epoch in trange(epochs_run, int(num_train_epochs), desc="Epoch"):
         epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=pregenerated_data, tokenizer=tokenizer,
                                             num_data_epochs=num_data_epochs, reduce_memory=reduce_memory)
         if local_rank == -1:
@@ -341,9 +339,6 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
         nb_tr_examples, nb_tr_steps = 0, 0
         with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-
-                if step > 50:
-                    break
 
                 batch = tuple(t.to(device) for t in batch)
 
