@@ -22,18 +22,20 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import csv
 import logging
-import os
 import random
 import sys
 import json
 import torch.distributed as dist
 
+import torch.multiprocessing as mp
+from torch.distributed import init_process_group, destroy_process_group
+import os
 import numpy as np
 import torch
 from collections import namedtuple
 from tempfile import TemporaryDirectory
 from pathlib import Path
-from torch.utils.data import (DataLoader, RandomSampler,Dataset)
+from torch.utils.data import (DataLoader, RandomSampler, Dataset)
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 from torch.nn import MSELoss
@@ -46,12 +48,21 @@ from transformer.optimization import BertAdam
 import signal
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-def handler(signum, frame):
-    print(f'Signal handler got signal Save Meeeee! {tokenizer} , {signum}')
-    # e.g. exit(0), or call your pytorch save routines
 
-# enable the handler
-signal.signal(signal.SIGUSR1, handler)
+# Initialize the distributed learning processes
+os.environ['CURL_CA_BUNDLE'] = ''
+
+# Utils for distributed training
+def ddp_setup(rank: int, world_size: int):
+    """
+   Args:
+       rank: Unique identifier of each process
+      world_size: Total number of processes
+   """
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    init_process_group(backend="nccl", rank=rank, world_size=world_size)
+
 
 csv.field_size_limit(sys.maxsize)
 
@@ -59,7 +70,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 InputFeatures = namedtuple("InputFeatures", "input_ids input_mask segment_ids lm_label_ids is_next")
 
@@ -126,16 +136,16 @@ class PregeneratedDataset(Dataset):
         if reduce_memory:
             self.temp_dir = TemporaryDirectory()
             self.working_dir = Path('/cache')
-            input_ids = np.memmap(filename=self.working_dir/'input_ids.memmap',
+            input_ids = np.memmap(filename=self.working_dir / 'input_ids.memmap',
                                   mode='w+', dtype=np.int32, shape=(num_samples, seq_len))
-            input_masks = np.memmap(filename=self.working_dir/'input_masks.memmap',
+            input_masks = np.memmap(filename=self.working_dir / 'input_masks.memmap',
                                     shape=(num_samples, seq_len), mode='w+', dtype=np.bool)
-            segment_ids = np.memmap(filename=self.working_dir/'segment_ids.memmap',
+            segment_ids = np.memmap(filename=self.working_dir / 'segment_ids.memmap',
                                     shape=(num_samples, seq_len), mode='w+', dtype=np.bool)
-            lm_label_ids = np.memmap(filename=self.working_dir/'lm_label_ids.memmap',
+            lm_label_ids = np.memmap(filename=self.working_dir / 'lm_label_ids.memmap',
                                      shape=(num_samples, seq_len), mode='w+', dtype=np.int32)
             lm_label_ids[:] = -1
-            is_nexts = np.memmap(filename=self.working_dir/'is_nexts.memmap',
+            is_nexts = np.memmap(filename=self.working_dir / 'is_nexts.memmap',
                                  shape=(num_samples,), mode='w+', dtype=np.bool)
         else:
             input_ids = np.zeros(shape=(num_samples, seq_len), dtype=np.int32)
@@ -178,13 +188,287 @@ class PregeneratedDataset(Dataset):
                 torch.tensor(int(self.is_nexts[item])))
 
 
-def main():
+def main(rank,world_size, pregenerated_data, teacher_model, student_model, output_dir, max_seq_length,
+         reduce_memory, do_eval, do_lower_case, train_batch_size, eval_batch_size, learning_rate,
+         weight_decay, num_train_epochs, warmup_proportion, no_cuda, local_rank, seed,
+         gradient_accumulation_steps, fp16, continue_train, eval_step):
+    # Multi-GPU setup
+    ddp_setup(rank, world_size)
+
+    # Load Data
+    data_path = Path(Path.joinpath(Path.cwd(), pregenerated_data))
+    samples_per_epoch = []
+    for i in range(int(num_train_epochs)):
+        epoch_file = data_path / "epoch_{}.json".format(i)
+        metrics_file = data_path / "epoch_{}_metrics.json".format(i)
+        if epoch_file.is_file() and metrics_file.is_file():
+            # continue training?
+            metrics = json.loads(metrics_file.read_text())
+            samples_per_epoch.append(metrics['num_training_examples'])
+        else:
+            if i == 0:
+                exit("No training data was found!")
+            print("Warning! There are fewer epochs of pregenerated data ({}) than training epochs ({}).".format(i,
+                                                                                                                num_train_epochs))
+            print("This script will loop over the available data, but training diversity may be negatively impacted.")
+            num_data_epochs = i
+            break
+    else:
+        num_data_epochs = num_train_epochs
+
+    # Folder creation in main process before multiprocessing starts
+    if local_rank == 0:
+        if os.path.exists(output_dir) and os.listdir(output_dir):
+            logging.info(f"rank of device {local_rank}")
+            raise ValueError("Output directory ({}) already exists and is not empty.".format(output_dir))
+        if not os.path.exists(output_dir):
+            logging.info(f"rank of device {local_rank}")
+            os.makedirs(output_dir)
+
+    if local_rank == -1 and no_cuda:
+        device = torch.device("cuda" if torch.cuda.is_available() and not no_cuda else "cpu")
+        local_rank = 0
+        n_gpu = 1  # just one
+    else:
+        device = torch.device("cuda:{}".format(local_rank))
+        n_gpu = torch.cuda.device_count()
+        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if n_gpu > 0:
+        torch.cuda.manual_seed_all(seed)
+
+    logging.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
+        device, n_gpu, bool(local_rank != -1), fp16))
+
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO if local_rank in [-1, 0] else logging.WARN)
+
+    if gradient_accumulation_steps < 1:
+        raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
+            gradient_accumulation_steps))
+
+    train_batch_size = train_batch_size // gradient_accumulation_steps
+    logging.info("  Train batch Size = %d", train_batch_size)
+    logging.info("  Grad Accumulation = %d", gradient_accumulation_steps)
+
+    # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
+    tokenizer = AutoTokenizer.from_pretrained(teacher_model, do_lower_case=do_lower_case)
+
+    total_train_examples = 0
+    for i in range(int(num_train_epochs)):
+        # The modulo takes into account the fact that we may loop over limited epochs of data
+        logging.info("  Samples per ep = %d", samples_per_epoch[i % len(samples_per_epoch)])
+        total_train_examples += samples_per_epoch[i % len(samples_per_epoch)]
+    logging.info("  Total train Examples = %d", total_train_examples)
+
+    num_train_optimization_steps = int(
+        total_train_examples / train_batch_size / gradient_accumulation_steps)
+    logging.info("  Train Opt steps Initial = %d", num_train_optimization_steps)
+    if local_rank != -1:
+        logging.info("Distributed training detected, adjusting num_train_optimization_steps ")
+        num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
+    logging.info("  Train Opt steps Dist = %d", num_train_optimization_steps)
+
+    if continue_train:
+        student_model = TinyBertForPreTraining.from_pretrained(student_model)
+    else:
+        student_model = TinyBertForPreTraining.from_scratch(student_model)
+    teacher_model = BertModel.from_pretrained(teacher_model)
+
+    # student_model = TinyBertForPreTraining.from_scratch(args.student_model, fit_size=teacher_model.config.hidden_size)
+    # if args.local_rank != -1:
+    #     try:
+    #         from torch.nn.parallel import DistributedDataParallel as DDP
+    #     except ImportError:
+    #         raise ImportError(
+    #             "DistributedDataParallel is not available, please install torch>=1.1.0")
+    #
+    #     teacher_model = DDP(teacher_model)
+    #     # Student isn't put on anything. Huh.
+    # elif n_gpu > 1:
+    #     # only used when training on multiple GPUs
+    #     student_model = torch.nn.DataParallel(student_model)
+    #     teacher_model = torch.nn.DataParallel(teacher_model)
+    student_model.to(device)
+    teacher_model.to(device)
+    # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
+    # Standard batch normalization only normalizes the data within each device (GPU). SyncBN normalizes the input within the whole mini-batch
+    student_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
+    teacher_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(teacher_model)
+    student_model = DDP(student_model, device_ids=[local_rank], output_device=local_rank,
+                        find_unused_parameters=True)
+    teacher_model = DDP(teacher_model, device_ids=[local_rank], output_device=local_rank)
+
+    size = 0
+    for n, p in student_model.named_parameters():
+        # logger.info('n: {}'.format(n))
+        # logger.info('p: {}'.format(p.nelement()))
+        size += p.nelement()
+
+    logger.info('Total parameters: {}'.format(size))
+
+    # Prepare optimizer
+    param_optimizer = list(student_model.named_parameters())
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
+
+    loss_mse = MSELoss()
+    optimizer = BertAdam(optimizer_grouped_parameters,
+                         lr=learning_rate,
+                         warmup=warmup_proportion,
+                         t_total=num_train_optimization_steps)
+
+    global_step = 0
+    logger.info('args:{}'.format(args))
+    logging.info("***** Running training *****")
+    logging.info("  Num examples = {}".format(total_train_examples))
+    logging.info("  Batch size = %d", train_batch_size)
+    logging.info("  Num steps = %d", num_train_optimization_steps)
+
+    # General Distillation
+    for epoch in trange(int(num_train_epochs), desc="Epoch"):
+        epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=pregenerated_data, tokenizer=tokenizer,
+                                            num_data_epochs=num_data_epochs, reduce_memory=reduce_memory)
+        if local_rank == -1:
+            train_sampler = RandomSampler(epoch_dataset)
+        else:
+            # distributed sampler for multi-gpu training
+            train_sampler = DistributedSampler(epoch_dataset)
+        train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=train_batch_size,
+                                      shuffle=False, )
+
+        tr_loss = 0.
+        tr_att_loss = 0.
+        tr_rep_loss = 0.
+        student_model.train()
+        nb_tr_examples, nb_tr_steps = 0, 0
+        with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
+            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+
+                if step > 50:
+                    break
+
+                batch = tuple(t.to(device) for t in batch)
+
+                input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
+                # print(f'Rank {args.local_rank} input_ids ----------->: {input_ids}')
+                if input_ids.size()[0] != train_batch_size:
+                    continue
+
+                att_loss = 0.
+                rep_loss = 0.
+
+                student_atts, student_reps = student_model(input_ids, segment_ids, input_mask)
+                teacher_reps, teacher_atts, _ = teacher_model(input_ids, segment_ids, input_mask)
+                teacher_reps = [teacher_rep.detach() for teacher_rep in teacher_reps]  # speedup 1.5x
+                teacher_atts = [teacher_att.detach() for teacher_att in teacher_atts]
+
+                teacher_layer_num = len(teacher_atts)
+                student_layer_num = len(student_atts)
+                assert teacher_layer_num % student_layer_num == 0
+                layers_per_block = int(teacher_layer_num / student_layer_num)
+                new_teacher_atts = [teacher_atts[i * layers_per_block + layers_per_block - 1]
+                                    for i in range(student_layer_num)]
+
+                for student_att, teacher_att in zip(student_atts, new_teacher_atts):
+                    student_att = torch.where(student_att <= -1e2, torch.zeros_like(student_att).to(device),
+                                              student_att)
+                    teacher_att = torch.where(teacher_att <= -1e2, torch.zeros_like(teacher_att).to(device),
+                                              teacher_att)
+                    att_loss += loss_mse(student_att, teacher_att)
+
+                new_teacher_reps = [teacher_reps[i * layers_per_block] for i in range(student_layer_num + 1)]
+                new_student_reps = student_reps
+
+                for student_rep, teacher_rep in zip(new_student_reps, new_teacher_reps):
+                    rep_loss += loss_mse(student_rep, teacher_rep)
+
+                loss = att_loss + rep_loss
+
+                if n_gpu > 1:
+                    loss = loss.mean()  # mean() to average on multi-gpu.
+                if gradient_accumulation_steps > 1:
+                    loss = loss / gradient_accumulation_steps
+
+                if fp16:
+                    optimizer.backward(loss)
+                else:
+                    loss.backward()
+
+                tr_att_loss += att_loss.item()
+                tr_rep_loss += rep_loss.item()
+
+                tr_loss += loss.item()
+                nb_tr_examples += input_ids.size(0)
+                nb_tr_steps += 1
+                pbar.update(1)
+
+                mean_loss = tr_loss * gradient_accumulation_steps / nb_tr_steps
+                mean_att_loss = tr_att_loss * gradient_accumulation_steps / nb_tr_steps
+                mean_rep_loss = tr_rep_loss * gradient_accumulation_steps / nb_tr_steps
+
+                if (step + 1) % gradient_accumulation_steps == 0:
+                    logging.info(f'Rank {local_rank} Optimiser steps loss ----------->: {loss}')
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    global_step += 1
+
+                    if (global_step + 1) % eval_step == 0:
+                        result = {}
+                        result['global_step'] = global_step
+                        result['loss'] = mean_loss
+                        result['att_loss'] = mean_att_loss
+                        result['rep_loss'] = mean_rep_loss
+                        output_eval_file = os.path.join(output_dir, "log.txt")
+                        with open(output_eval_file, "a") as writer:
+                            logger.info("***** Eval results *****")
+                            for key in sorted(result.keys()):
+                                logger.info("  %s = %s", key, str(result[key]))
+                                writer.write("%s = %s\n" % (key, str(result[key])))
+
+                        # Save a trained model
+                        model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                        logging.info("** ** * Saving fine-tuned model Eval Step** ** * ")
+                        # Only save the model it-self
+                        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+
+                        output_model_file = os.path.join(output_dir, model_name)
+                        output_config_file = os.path.join(output_dir, CONFIG_NAME)
+
+                        torch.save(model_to_save.state_dict(), output_model_file)
+                        model_to_save.config.to_json_file(output_config_file)
+                        tokenizer.save_vocabulary(output_dir)
+
+            # Save a trained model only for master process
+            if local_rank == 0:
+                model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                logging.info("** ** * Saving fine-tuned model Final ** ** * ")
+                model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+
+                output_model_file = os.path.join(output_dir, model_name)
+                output_config_file = os.path.join(output_dir, CONFIG_NAME)
+
+                torch.save(model_to_save.state_dict(), output_model_file)
+                model_to_save.config.to_json_file(output_config_file)
+                tokenizer.save_vocabulary(output_dir)
+
+    destroy_process_group()
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Required parameters
     parser.add_argument("--pregenerated_data",
                         type=Path,
-                        default=Path('data/pretraining_data'),)
+                        default=Path('data/pretraining_data'), )
     parser.add_argument("--teacher_model",
                         type=str,
                         default="bert-base-german-dbmdz-cased")
@@ -243,7 +527,7 @@ def main():
                         help="Whether not to use CUDA when available")
     parser.add_argument("--local-rank",
                         type=int,
-                        default=-1,
+                        default=0,
                         help="local_rank for distributed training on gpus")
     parser.add_argument('--seed',
                         type=int,
@@ -266,274 +550,13 @@ def main():
                         type=int,
                         default=1000)
 
-    # This is used for running on Huawei Cloud.
-    parser.add_argument('--data_url',
-                        type=str,
-                        default="")
-
     args = parser.parse_args()
-
-    # Load Data
-    data_path = Path(Path.joinpath(Path.cwd(), args.pregenerated_data))
-    samples_per_epoch = []
-    for i in range(int(args.num_train_epochs)):
-        epoch_file = data_path / "epoch_{}.json".format(i)
-        metrics_file = data_path / "epoch_{}_metrics.json".format(i)
-        if epoch_file.is_file() and metrics_file.is_file():
-            # continue training?
-            metrics = json.loads(metrics_file.read_text())
-            samples_per_epoch.append(metrics['num_training_examples'])
-        else:
-            if i == 0:
-                exit("No training data was found!")
-            print("Warning! There are fewer epochs of pregenerated data ({}) than training epochs ({}).".format(i, args.num_train_epochs))
-            print("This script will loop over the available data, but training diversity may be negatively impacted.")
-            num_data_epochs = i
-            break
-    else:
-        num_data_epochs = args.num_train_epochs
-    args.local_rank = int(os.environ["LOCAL_RANK"] ) if "LOCAL_RANK" in os.environ else -1
-
-    # Folder creation in main process before multiprocessing starts
-    if args.local_rank ==0:
-        if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-            logging.info(f"rank of device {args.local_rank}")
-            raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-        if not os.path.exists(args.output_dir):
-            logging.info(f"rank of device {args.local_rank}")
-            os.makedirs(args.output_dir)
-
-    if args.local_rank == -1 and args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        args.local_rank= 0
-        n_gpu = 1 # just one
-    else:
-        device = torch.device("cuda:{}".format(args.local_rank))
-        n_gpu = torch.cuda.device_count()
-        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
-
-    logging.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
-        device, n_gpu, bool(args.local_rank != -1), args.fp16))
-    if device.type == 'cuda':
-        torch.distributed.init_process_group(backend='nccl', world_size=n_gpu, rank=args.local_rank)
-    else:
-        torch.distributed.init_process_group(backend='gloo', init_method='env://', world_size=n_gpu, rank=0)
-
-
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
-
-    if args.gradient_accumulation_steps < 1:
-        raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
-            args.gradient_accumulation_steps))
-
-    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
-    logging.info("  Train batch Size = %d", args.train_batch_size)
-    logging.info("  Grad Accumulation = %d", args.gradient_accumulation_steps)
-
-    # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
-    tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
-
-    total_train_examples = 0
-    for i in range(int(args.num_train_epochs)):
-        # The modulo takes into account the fact that we may loop over limited epochs of data
-        logging.info("  Samples per ep = %d", samples_per_epoch[i % len(samples_per_epoch)])
-        total_train_examples += samples_per_epoch[i % len(samples_per_epoch)]
-    logging.info("  Total train Examples = %d", total_train_examples)
-
-    num_train_optimization_steps = int(
-        total_train_examples / args.train_batch_size / args.gradient_accumulation_steps)
-    logging.info("  Train Opt steps Initial = %d", num_train_optimization_steps)
-    if args.local_rank != -1:
-        num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
-    logging.info("  Train Opt steps Dist = %d", num_train_optimization_steps)
-
-    if args.continue_train:
-        student_model = TinyBertForPreTraining.from_pretrained(args.student_model)
-    else:
-        student_model = TinyBertForPreTraining.from_scratch(args.student_model)
-    teacher_model = BertModel.from_pretrained(args.teacher_model)
-
-    # student_model = TinyBertForPreTraining.from_scratch(args.student_model, fit_size=teacher_model.config.hidden_size)
-    # if args.local_rank != -1:
-    #     try:
-    #         from torch.nn.parallel import DistributedDataParallel as DDP
-    #     except ImportError:
-    #         raise ImportError(
-    #             "DistributedDataParallel is not available, please install torch>=1.1.0")
-    #
-    #     teacher_model = DDP(teacher_model)
-    #     # Student isn't put on anything. Huh.
-    # elif n_gpu > 1:
-    #     # only used when training on multiple GPUs
-    #     student_model = torch.nn.DataParallel(student_model)
-    #     teacher_model = torch.nn.DataParallel(teacher_model)
-    student_model.to(device)
-    teacher_model.to(device)
-    # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
-    # Standard batch normalization only normalizes the data within each device (GPU). SyncBN normalizes the input within the whole mini-batch
-    student_model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
-    teacher_model=torch.nn.SyncBatchNorm.convert_sync_batchnorm(teacher_model)
-    student_model = DDP(student_model,device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
-    teacher_model = DDP(teacher_model,device_ids=[args.local_rank], output_device=args.local_rank)
-
-
-    size = 0
-    for n, p in student_model.named_parameters():
-        # logger.info('n: {}'.format(n))
-        # logger.info('p: {}'.format(p.nelement()))
-        size += p.nelement()
-
-    logger.info('Total parameters: {}'.format(size))
-
-    # Prepare optimizer
-    param_optimizer = list(student_model.named_parameters())
-    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-    ]
-
-    loss_mse = MSELoss()
-    optimizer = BertAdam(optimizer_grouped_parameters,
-                         lr=args.learning_rate,
-                         warmup=args.warmup_proportion,
-                         t_total=num_train_optimization_steps)
-
-    global_step = 0
-    logger.info('args:{}'.format(args))
-    logging.info("***** Running training *****")
-    logging.info("  Num examples = {}".format(total_train_examples))
-    logging.info("  Batch size = %d", args.train_batch_size)
-    logging.info("  Num steps = %d", num_train_optimization_steps)
-
-    for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
-        epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=args.pregenerated_data, tokenizer=tokenizer,
-                                            num_data_epochs=num_data_epochs, reduce_memory=args.reduce_memory)
-        if args.local_rank == -1:
-            train_sampler = RandomSampler(epoch_dataset)
-        else:
-            # distributed sampler for multi-gpu training
-            train_sampler = DistributedSampler(epoch_dataset)
-        train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=args.train_batch_size, shuffle=False,)
-
-        tr_loss = 0.
-        tr_att_loss = 0.
-        tr_rep_loss = 0.
-        student_model.train()
-        nb_tr_examples, nb_tr_steps = 0, 0
-        with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
-            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-                    break
-                batch = tuple(t.to(device) for t in batch)
-
-                input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
-                if input_ids.size()[0] != args.train_batch_size:
-                    continue
-
-                att_loss = 0.
-                rep_loss = 0.
-
-                student_atts, student_reps = student_model(input_ids, segment_ids, input_mask)
-                teacher_reps, teacher_atts, _ = teacher_model(input_ids, segment_ids, input_mask)
-                teacher_reps = [teacher_rep.detach() for teacher_rep in teacher_reps]  # speedup 1.5x
-                teacher_atts = [teacher_att.detach() for teacher_att in teacher_atts]
-
-                teacher_layer_num = len(teacher_atts)
-                student_layer_num = len(student_atts)
-                assert teacher_layer_num % student_layer_num == 0
-                layers_per_block = int(teacher_layer_num / student_layer_num)
-                new_teacher_atts = [teacher_atts[i * layers_per_block + layers_per_block - 1]
-                                    for i in range(student_layer_num)]
-
-                for student_att, teacher_att in zip(student_atts, new_teacher_atts):
-                    student_att = torch.where(student_att <= -1e2, torch.zeros_like(student_att).to(device),
-                                              student_att)
-                    teacher_att = torch.where(teacher_att <= -1e2, torch.zeros_like(teacher_att).to(device),
-                                              teacher_att)
-                    att_loss += loss_mse(student_att, teacher_att)
-
-                new_teacher_reps = [teacher_reps[i * layers_per_block] for i in range(student_layer_num + 1)]
-                new_student_reps = student_reps
-
-                for student_rep, teacher_rep in zip(new_student_reps, new_teacher_reps):
-                    rep_loss += loss_mse(student_rep, teacher_rep)
-
-                loss = att_loss + rep_loss
-
-                if n_gpu > 1:
-                    loss = loss.mean()  # mean() to average on multi-gpu.
-                if args.gradient_accumulation_steps > 1:
-                    loss = loss / args.gradient_accumulation_steps
-
-                if args.fp16:
-                    optimizer.backward(loss)
-                else:
-                    loss.backward()
-
-                tr_att_loss += att_loss.item()
-                tr_rep_loss += rep_loss.item()
-
-                tr_loss += loss.item()
-                nb_tr_examples += input_ids.size(0)
-                nb_tr_steps += 1
-                pbar.update(1)
-
-                mean_loss = tr_loss * args.gradient_accumulation_steps / nb_tr_steps
-                mean_att_loss = tr_att_loss * args.gradient_accumulation_steps / nb_tr_steps
-                mean_rep_loss = tr_rep_loss * args.gradient_accumulation_steps / nb_tr_steps
-
-                if (step + 1) % args.gradient_accumulation_steps == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    global_step += 1
-
-                    if (global_step + 1) % args.eval_step == 0:
-                        result = {}
-                        result['global_step'] = global_step
-                        result['loss'] = mean_loss
-                        result['att_loss'] = mean_att_loss
-                        result['rep_loss'] = mean_rep_loss
-                        output_eval_file = os.path.join(args.output_dir, "log.txt")
-                        with open(output_eval_file, "a") as writer:
-                            logger.info("***** Eval results *****")
-                            for key in sorted(result.keys()):
-                                logger.info("  %s = %s", key, str(result[key]))
-                                writer.write("%s = %s\n" % (key, str(result[key])))
-
-                        # Save a trained model
-                        model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                        logging.info("** ** * Saving fine-tuned model Eval Step** ** * ")
-                        # Only save the model it-self
-                        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
-
-                        output_model_file = os.path.join(args.output_dir, model_name)
-                        output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
-
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
-                        tokenizer.save_vocabulary(args.output_dir)
-
-            # Save a trained model only for master process
-            if args.local_rank == 0:
-                model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                logging.info("** ** * Saving fine-tuned model Final ** ** * ")
-                model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
-
-                output_model_file = os.path.join(args.output_dir, model_name)
-                output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
-
-                torch.save(model_to_save.state_dict(), output_model_file)
-                model_to_save.config.to_json_file(output_config_file)
-                tokenizer.save_vocabulary(args.output_dir)
-
-
-if __name__ == "__main__":
-    main()
+    world_size = torch.cuda.device_count()
+    mp.spawn(main, args=(world_size, args.pregenerated_data, args.teacher_model, args.student_model, args.output_dir,
+                         args.max_seq_length, args.reduce_memory, args.do_eval, args.do_lower_case,
+                         args.train_batch_size,
+                         args.eval_batch_size, args.learning_rate, args.weight_decay, args.num_train_epochs,
+                         args.warmup_proportion,
+                         args.no_cuda, args.local_rank, args.seed, args.gradient_accumulation_steps, args.fp16,
+                         args.continue_train,
+                         args.eval_step), nprocs=world_size)
