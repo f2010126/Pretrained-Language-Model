@@ -331,6 +331,8 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
             train_sampler = DistributedSampler(epoch_dataset)
         train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=train_batch_size,
                                       shuffle=False, )
+        #  make shuffling work properly across multiple epochs. 
+        train_dataloader.sampler.set_epoch(epoch)
 
         tr_loss = 0.
         tr_att_loss = 0.
