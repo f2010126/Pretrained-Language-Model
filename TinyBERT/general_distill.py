@@ -26,6 +26,7 @@ import random
 import sys
 import json
 import torch.distributed as dist
+import wandb
 
 import torch.multiprocessing as mp
 from torch.distributed import init_process_group, destroy_process_group
@@ -174,12 +175,19 @@ class PregeneratedDataset(Dataset):
                 torch.tensor(self.lm_label_ids[item].astype(np.int64)),
                 torch.tensor(int(self.is_nexts[item])))
 
-
+def set_up_checkpoint():
+    try:
+        os.makedirs("checkpoints")
+    except FileExistsError:
+        # directory already exists
+        pass
 def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_length,
          reduce_memory, do_eval, do_lower_case, train_batch_size, eval_batch_size, learning_rate,
          weight_decay, num_train_epochs, warmup_proportion, no_cuda, local_rank, seed,
          gradient_accumulation_steps, fp16, continue_train, eval_step):
     # Multi-GPU setup
+    set_up_checkpoint()
+
     init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
 
@@ -207,11 +215,10 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
     # Folder creation in main process before multiprocessing starts
     if local_rank == 0:
         if os.path.exists(output_dir) and os.listdir(output_dir):
-            logging.info(f"rank of device {local_rank}")
             raise ValueError("Output directory ({}) already exists and is not empty.".format(output_dir))
         if not os.path.exists(output_dir):
-            logging.info(f"rank of device {local_rank}")
             os.makedirs(output_dir)
+
 
     if local_rank == -1 and no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not no_cuda else "cpu")
@@ -240,8 +247,6 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
             gradient_accumulation_steps))
 
     train_batch_size = train_batch_size // gradient_accumulation_steps
-    logging.info("  Train batch Size = %d", train_batch_size)
-    logging.info("  Grad Accumulation = %d", gradient_accumulation_steps)
 
     # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
     tokenizer = AutoTokenizer.from_pretrained(teacher_model, do_lower_case=do_lower_case)
@@ -249,17 +254,13 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
     total_train_examples = 0
     for i in range(int(num_train_epochs)):
         # The modulo takes into account the fact that we may loop over limited epochs of data
-        logging.info("  Samples per ep = %d", samples_per_epoch[i % len(samples_per_epoch)])
         total_train_examples += samples_per_epoch[i % len(samples_per_epoch)]
-    logging.info("  Total train Examples = %d", total_train_examples)
-
     num_train_optimization_steps = int(
         total_train_examples / train_batch_size / gradient_accumulation_steps)
-    logging.info("  Train Opt steps Initial = %d", num_train_optimization_steps)
+
     if local_rank != -1:
-        logging.info("Distributed training detected, adjusting num_train_optimization_steps ")
         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
-    logging.info("  Train Opt steps Dist = %d", num_train_optimization_steps)
+
 
     if continue_train:
         student_model = TinyBertForPreTraining.from_pretrained(student_model)
@@ -274,6 +275,7 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
     # SyncBN normalizes the input within the whole mini-batch
     student_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(student_model)
     teacher_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(teacher_model)
+
     student_model = DDP(student_model, device_ids=[local_rank], output_device=local_rank,
                         find_unused_parameters=True)
     teacher_model = DDP(teacher_model, device_ids=[local_rank], output_device=local_rank)
@@ -301,8 +303,9 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                          t_total=num_train_optimization_steps)
 
     global_step = 0
+    ep_step=0
     epochs_run = 0
-    snapshot_path = 'models/checkpoint.pt'
+    snapshot_path = 'checkpoints/resume_checkpoint.pt'
     if os.path.exists(snapshot_path):
         print("Loading snapshot")
         loc = f"cuda:{local_rank}"
@@ -310,9 +313,8 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
         student_model.load_state_dict(snapshot["student_model_state_dict"])
         teacher_model.load_state_dict(snapshot["teacher_model_state_dict"])
         epochs_run = snapshot["epoch"]
-        global_step = snapshot["global_step"]
+        ep_step = snapshot["ep_step"]
         optimizer.load_state_dict(snapshot["optimizer_state_dict"])
-        print(f"Resuming training from snapshot at Epoch {epochs_run}")
 
     logger.info('args:{}'.format(args))
     logging.info("***** Running training *****")
@@ -320,6 +322,8 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
     logging.info("  Batch size = %d", train_batch_size)
     logging.info("  Num steps = %d", num_train_optimization_steps)
 
+    # the original will have 0_0, the resuming will have something else
+    logging_file="{}_{}_log.txt".format(epochs_run,ep_step)
     # General Distillation
     for epoch in trange(epochs_run, int(num_train_epochs), desc="Epoch"):
         epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=pregenerated_data, tokenizer=tokenizer,
@@ -341,11 +345,12 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
         nb_tr_examples, nb_tr_steps = 0, 0
         with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+                # restarting from checkpoint
+                if step < ep_step:
+                    continue
 
                 batch = tuple(t.to(device) for t in batch)
-
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
-
                 if input_ids.size()[0] != train_batch_size:
                     continue
 
@@ -402,18 +407,21 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                 mean_rep_loss = tr_rep_loss * gradient_accumulation_steps / nb_tr_steps
 
                 if (step + 1) % gradient_accumulation_steps == 0:
-                    logging.info(f'Rank {local_rank} Optimiser steps loss ----------->: {loss}')
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
 
-                    if (global_step + 1) % eval_step == 0:
+                # Logging and evaluation
+                if (global_step + 1) % eval_step == 0:
+                    # Save everything in only main process
+                    if local_rank == 0:
                         result = {}
                         result['global_step'] = global_step
                         result['loss'] = mean_loss
                         result['att_loss'] = mean_att_loss
                         result['rep_loss'] = mean_rep_loss
-                        output_eval_file = os.path.join(output_dir, "log.txt")
+
+                        output_eval_file = os.path.join(output_dir, logging_file)
                         with open(output_eval_file, "a") as writer:
                             logger.info("***** Eval results *****")
                             for key in sorted(result.keys()):
@@ -433,18 +441,16 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                         model_to_save.config.to_json_file(output_config_file)
                         tokenizer.save_vocabulary(output_dir)
 
-                        if local_rank == 0:
-                            # Save everything in only main process
-                            ckpt_path = "models/checkpoint.pt"
-                            torch.save({
-                                'global_step': global_step,
+                        ckpt_path = "checkpoints/resume_checkpoint.pt"
+                        torch.save({
+                                'ep_step': step,
                                 'epoch': epoch,
                                 'student_model_state_dict': student_model.state_dict(),
                                 'teacher_model_state_dict': teacher_model.state_dict(),
                                 'optimizer_state_dict': optimizer.state_dict(),
                             }, ckpt_path)
-                            output_optimizer_file = os.path.join(output_dir, "optimizer.pt")
-                            torch.save(optimizer.state_dict(), output_optimizer_file)
+                        output_optimizer_file = os.path.join(output_dir, "optimizer.pt")
+                        torch.save(optimizer.state_dict(), output_optimizer_file)
 
             # Save a trained model only for master process
             if local_rank == 0:
@@ -458,6 +464,19 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                 torch.save(model_to_save.state_dict(), output_model_file)
                 model_to_save.config.to_json_file(output_config_file)
                 tokenizer.save_vocabulary(output_dir)
+
+    # Save a trained model only for master process
+    if local_rank == 0:
+        model_name = "gen_distill_tinyBERT_{}".format(WEIGHTS_NAME)
+        logging.info("** ** * Saving fine-tuned model Final ** ** * ")
+        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+
+        output_model_file = os.path.join(output_dir, model_name)
+        output_config_file = os.path.join(output_dir, CONFIG_NAME)
+
+        torch.save(model_to_save.state_dict(), output_model_file)
+        model_to_save.config.to_json_file(output_config_file)
+        tokenizer.save_vocabulary(output_dir)
 
     destroy_process_group()
 
@@ -478,6 +497,9 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir",
                         type=str,
                         default='models')
+    parser.add_argument("--checkpoint-path",
+                        type=str,
+                        default='checkpoints')
 
     # Other parameters
     parser.add_argument("--max_seq_length",
