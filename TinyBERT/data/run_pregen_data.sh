@@ -30,5 +30,5 @@ cd $(ws_find zap_hpo_og)/TinyBert/TinyBERT
 python3 pregenerate_training_data.py --train_corpus 'data/dewiki-20220201-clean.txt' \
                   --bert_model 'bert-base-german-dbmdz-cased' \
                   --reduce_memory --do_lower_case \
-                  --epochs_to_generate 3 \
-                  --output_dir 'data/pretraining_data' \
+                  --epochs_to_generate 30 \
+                  --output_dir 'data/ep_30_pretraining_data' \

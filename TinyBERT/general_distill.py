@@ -46,7 +46,8 @@ from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
 from transformer.modeling import TinyBertForPreTraining, BertModel
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
-import signal
+
+from datetime import datetime
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Initialize the distributed learning processes
@@ -102,6 +103,11 @@ def convert_example_to_features(example, tokenizer, max_seq_length):
     return features
 
 
+def log_from_master(msg):
+    if dist.get_rank() == 0:
+        logger.info(msg)
+
+
 class PregeneratedDataset(Dataset):
     def __init__(self, training_path, epoch, tokenizer, num_data_epochs, reduce_memory=False):
         self.vocab = tokenizer.vocab
@@ -142,7 +148,7 @@ class PregeneratedDataset(Dataset):
             lm_label_ids = np.full(shape=(num_samples, seq_len), dtype=np.int32, fill_value=-1)
             is_nexts = np.zeros(shape=(num_samples,), dtype=bool)
 
-        logging.info("Loading training examples for epoch {}".format(epoch))
+        log_from_master(f'Loading training examples for epoch {epoch}')
 
         with data_file.open() as f:
             for i, line in enumerate(tqdm(f, total=num_samples, desc="Training examples")):
@@ -156,7 +162,7 @@ class PregeneratedDataset(Dataset):
                 is_nexts[i] = features.is_next
 
         # assert i == num_samples - 1  # Assert that the sample count metric was true
-        logging.info("Loading complete!")
+        log_from_master("Loading complete!")
         self.num_samples = num_samples
         self.seq_len = seq_len
         self.input_ids = input_ids
@@ -175,26 +181,30 @@ class PregeneratedDataset(Dataset):
                 torch.tensor(self.lm_label_ids[item].astype(np.int64)),
                 torch.tensor(int(self.is_nexts[item])))
 
-def set_up_checkpoint():
+
+def set_up_folders(folder, file_name):
+    path = os.path.join(os.getcwd(), folder, file_name)
     try:
-        os.makedirs("checkpoints")
+        os.makedirs(path)
     except FileExistsError:
         # directory already exists
         pass
-def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_length,
-         reduce_memory, do_eval, do_lower_case, train_batch_size, eval_batch_size, learning_rate,
-         weight_decay, num_train_epochs, warmup_proportion, no_cuda, local_rank, seed,
-         gradient_accumulation_steps, fp16, continue_train, eval_step):
-    # Multi-GPU setup
-    set_up_checkpoint()
+    return path
 
+
+def main(args):
+    # Multi-GPU setup
+    # Setup folders for checkpoints and models. If the folder already exists, the program will continue
+    checkpoint_path = set_up_folders('checkpoints', args.checkpoint_name)
+    model_path = set_up_folders('models', args.output_dir)
     init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
+    run_logger = set_logging(args)
 
     # Load Data
-    data_path = Path(Path.joinpath(Path.cwd(), pregenerated_data))
+    data_path = Path(Path.joinpath(Path.cwd(), args.pregenerated_data))
     samples_per_epoch = []
-    for i in range(int(num_train_epochs)):
+    for i in range(int(args.num_train_epochs)):
         epoch_file = data_path / "epoch_{}.json".format(i)
         metrics_file = data_path / "epoch_{}_metrics.json".format(i)
         if epoch_file.is_file() and metrics_file.is_file():
@@ -205,69 +215,58 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
             if i == 0:
                 exit("No training data was found!")
             print("Warning! There are fewer epochs of pregenerated data ({}) than training epochs ({}).".format(i,
-                                                                                                                num_train_epochs))
+                                                                                                                args.num_train_epochs))
             print("This script will loop over the available data, but training diversity may be negatively impacted.")
             num_data_epochs = i
             break
     else:
-        num_data_epochs = num_train_epochs
+        num_data_epochs = args.num_train_epochs
 
-    # Folder creation in main process before multiprocessing starts
-    if local_rank == 0:
-        if os.path.exists(output_dir) and os.listdir(output_dir):
-            raise ValueError("Output directory ({}) already exists and is not empty.".format(output_dir))
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-
-    if local_rank == -1 and no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not no_cuda else "cpu")
-        local_rank = 0
+    if local_rank == -1 and args.no_cuda:
+        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         n_gpu = 1  # just one
     else:
         device = torch.device("cuda:{}".format(local_rank))
         n_gpu = torch.cuda.device_count()
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
 
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if n_gpu > 0:
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(args.seed)
 
-    logging.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
-        device, n_gpu, bool(local_rank != -1), fp16))
+    log_from_master(
+        f"device: {device} n_gpu: {n_gpu}, distributed training: {bool(local_rank != -1)}, 16-bits training: {args.fp16}")
 
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if local_rank in [-1, 0] else logging.WARN)
 
-    if gradient_accumulation_steps < 1:
+    if args.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
-            gradient_accumulation_steps))
+            args.gradient_accumulation_steps))
 
-    train_batch_size = train_batch_size // gradient_accumulation_steps
+    train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # tokenizer = BertTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
-    tokenizer = AutoTokenizer.from_pretrained(teacher_model, do_lower_case=do_lower_case)
+    tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, do_lower_case=args.do_lower_case)
 
     total_train_examples = 0
-    for i in range(int(num_train_epochs)):
+    for i in range(int(args.num_train_epochs)):
         # The modulo takes into account the fact that we may loop over limited epochs of data
         total_train_examples += samples_per_epoch[i % len(samples_per_epoch)]
     num_train_optimization_steps = int(
-        total_train_examples / train_batch_size / gradient_accumulation_steps)
+        total_train_examples / train_batch_size / args.gradient_accumulation_steps)
 
     if local_rank != -1:
         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
-
-    if continue_train:
-        student_model = TinyBertForPreTraining.from_pretrained(student_model)
+    if args.continue_train:
+        student_model = TinyBertForPreTraining.from_pretrained(args.student_model)
     else:
-        student_model = TinyBertForPreTraining.from_scratch(student_model)
-    teacher_model = BertModel.from_pretrained(teacher_model)
-
+        student_model = TinyBertForPreTraining.from_scratch(args.student_model)
+    teacher_model = BertModel.from_pretrained(args.teacher_model)
     student_model.to(device)
     teacher_model.to(device)
     # Convert BatchNorm to SyncBatchNorm.type of batch normalization used for multi-GPU training.
@@ -298,36 +297,42 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
 
     loss_mse = MSELoss()
     optimizer = BertAdam(optimizer_grouped_parameters,
-                         lr=learning_rate,
-                         warmup=warmup_proportion,
+                         lr=args.learning_rate,
+                         warmup=args.warmup_proportion,
                          t_total=num_train_optimization_steps)
 
     global_step = 0
-    ep_step=0
+    ep_step = 0
     epochs_run = 0
-    snapshot_path = 'checkpoints/resume_checkpoint.pt'
+    snapshot_path = os.path.join(checkpoint_path, 'resume_checkpoint.pt')
+    print(f"{snapshot_path} exists? {os.path.exists(snapshot_path)}")
     if os.path.exists(snapshot_path):
-        print("Loading snapshot")
+        print("Loading snapshot from {}".format(snapshot_path))
         loc = f"cuda:{local_rank}"
         snapshot = torch.load(snapshot_path, map_location=loc)
         student_model.load_state_dict(snapshot["student_model_state_dict"])
         teacher_model.load_state_dict(snapshot["teacher_model_state_dict"])
         epochs_run = snapshot["epoch"]
+        global_step = snapshot["global_step"]
         ep_step = snapshot["ep_step"]
         optimizer.load_state_dict(snapshot["optimizer_state_dict"])
 
-    logger.info('args:{}'.format(args))
-    logging.info("***** Running training *****")
-    logging.info("  Num examples = {}".format(total_train_examples))
-    logging.info("  Batch size = %d", train_batch_size)
-    logging.info("  Num steps = %d", num_train_optimization_steps)
+    if local_rank == 0:
+        run_logger.watch(student_model)
+
+    log_from_master(f'args:{args}')
+    log_from_master("***** Running training *****")
+    log_from_master(f"  Num examples = {total_train_examples}")
+    log_from_master(f"  Per GPU Batch size ={train_batch_size}")
+    log_from_master(f" Overall? Num steps = {num_train_optimization_steps}")
 
     # the original will have 0_0, the resuming will have something else
-    logging_file="{}_{}_log.txt".format(epochs_run,ep_step)
+    logging_file = "{}_{}_log.txt".format(epochs_run, ep_step)
+    print("logging file: ", logging_file)
     # General Distillation
-    for epoch in trange(epochs_run, int(num_train_epochs), desc="Epoch"):
-        epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=pregenerated_data, tokenizer=tokenizer,
-                                            num_data_epochs=num_data_epochs, reduce_memory=reduce_memory)
+    for epoch in trange(epochs_run, int(args.num_train_epochs), desc="Epoch"):
+        epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=args.pregenerated_data, tokenizer=tokenizer,
+                                            num_data_epochs=num_data_epochs, reduce_memory=args.reduce_memory)
         if local_rank == -1:
             train_sampler = RandomSampler(epoch_dataset)
         else:
@@ -345,6 +350,7 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
         nb_tr_examples, nb_tr_steps = 0, 0
         with tqdm(total=len(train_dataloader), desc="Epoch {}".format(epoch)) as pbar:
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+
                 # restarting from checkpoint
                 if step < ep_step:
                     continue
@@ -386,10 +392,10 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
 
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
-                if gradient_accumulation_steps > 1:
-                    loss = loss / gradient_accumulation_steps
+                if args.gradient_accumulation_steps > 1:
+                    loss = loss / args.gradient_accumulation_steps
 
-                if fp16:
+                if args.fp16:
                     optimizer.backward(loss)
                 else:
                     loss.backward()
@@ -402,55 +408,70 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                 nb_tr_steps += 1
                 pbar.update(1)
 
-                mean_loss = tr_loss * gradient_accumulation_steps / nb_tr_steps
-                mean_att_loss = tr_att_loss * gradient_accumulation_steps / nb_tr_steps
-                mean_rep_loss = tr_rep_loss * gradient_accumulation_steps / nb_tr_steps
+                mean_loss = tr_loss * args.gradient_accumulation_steps / nb_tr_steps
+                mean_att_loss = tr_att_loss * args.gradient_accumulation_steps / nb_tr_steps
+                mean_rep_loss = tr_rep_loss * args.gradient_accumulation_steps / nb_tr_steps
 
-                if (step + 1) % gradient_accumulation_steps == 0:
+                if (step + 1) % args.gradient_accumulation_steps == 0:
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
 
-                # Logging and evaluation
-                if (global_step + 1) % eval_step == 0:
-                    # Save everything in only main process
-                    if local_rank == 0:
+                # Logging and evaluation in main process
+                print("local_ rank  {} global_step: {}".format(local_rank, global_step))
+                if local_rank == 0:
+
+                    # Save a trained model
+                    if step % 10 == 0:
+                        model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                        logging.info("** ** * Saving tinBERT model Eval Step** ** * ")
+                        # Only save the model it-self
+                        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+
+                        output_model_file = os.path.join(model_path, model_name)
+                        output_config_file = os.path.join(model_path, CONFIG_NAME)
+
+                        torch.save(model_to_save.state_dict(), output_model_file)
+                        model_to_save.config.to_json_file(output_config_file)
+                        tokenizer.save_vocabulary(model_path)
+
+                        ckpt_path = os.path.join(checkpoint_path, 'resume_checkpoint.pt')
+                        torch.save({
+                            'ep_step': step,
+                            'epoch': epoch,
+                            'global_step': global_step,
+                            'student_model_state_dict': student_model.state_dict(),
+                            'teacher_model_state_dict': teacher_model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                        }, ckpt_path)
+                        output_optimizer_file = os.path.join(model_path, "optimizer.pt")
+                        torch.save(optimizer.state_dict(), output_optimizer_file)
+
+                    # Log eval results
+                    if (global_step + 1) % args.eval_step == 0:
                         result = {}
                         result['global_step'] = global_step
                         result['loss'] = mean_loss
                         result['att_loss'] = mean_att_loss
                         result['rep_loss'] = mean_rep_loss
 
-                        output_eval_file = os.path.join(output_dir, logging_file)
+                        run_logger.log(result)
+
+                        output_eval_file = os.path.join(model_path, logging_file)
+                        with open(output_eval_file, "a") as writer:
+                            logger.info("***** Eval results *****")
+                            for key in sorted(result.keys()):
+                                logger.info("  %s = %s", key, str(result[key]))
+                                writer.write("%s = %s\n" % (key, str(result[key])))
+                        # save to checkpoints
+                        output_eval_file = os.path.join(checkpoint_path, logging_file)
                         with open(output_eval_file, "a") as writer:
                             logger.info("***** Eval results *****")
                             for key in sorted(result.keys()):
                                 logger.info("  %s = %s", key, str(result[key]))
                                 writer.write("%s = %s\n" % (key, str(result[key])))
 
-                        # Save a trained model
-                        model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                        logging.info("** ** * Saving fine-tuned model Eval Step** ** * ")
-                        # Only save the model it-self
-                        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
-
-                        output_model_file = os.path.join(output_dir, model_name)
-                        output_config_file = os.path.join(output_dir, CONFIG_NAME)
-
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
-                        tokenizer.save_vocabulary(output_dir)
-
-                        ckpt_path = "checkpoints/resume_checkpoint.pt"
-                        torch.save({
-                                'ep_step': step,
-                                'epoch': epoch,
-                                'student_model_state_dict': student_model.state_dict(),
-                                'teacher_model_state_dict': teacher_model.state_dict(),
-                                'optimizer_state_dict': optimizer.state_dict(),
-                            }, ckpt_path)
-                        output_optimizer_file = os.path.join(output_dir, "optimizer.pt")
-                        torch.save(optimizer.state_dict(), output_optimizer_file)
+                        run_logger.save(output_eval_file)
 
             # Save a trained model only for master process
             if local_rank == 0:
@@ -458,12 +479,12 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
                 logging.info("** ** * Saving fine-tuned model Final ** ** * ")
                 model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
-                output_model_file = os.path.join(output_dir, model_name)
-                output_config_file = os.path.join(output_dir, CONFIG_NAME)
+                output_model_file = os.path.join(model_path, model_name)
+                output_config_file = os.path.join(model_path, CONFIG_NAME)
 
                 torch.save(model_to_save.state_dict(), output_model_file)
                 model_to_save.config.to_json_file(output_config_file)
-                tokenizer.save_vocabulary(output_dir)
+                tokenizer.save_vocabulary(model_path)
 
     # Save a trained model only for master process
     if local_rank == 0:
@@ -471,14 +492,27 @@ def main(pregenerated_data, teacher_model, student_model, output_dir, max_seq_le
         logging.info("** ** * Saving fine-tuned model Final ** ** * ")
         model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
-        output_model_file = os.path.join(output_dir, model_name)
-        output_config_file = os.path.join(output_dir, CONFIG_NAME)
+        output_model_file = os.path.join(model_path, model_name)
+        output_config_file = os.path.join(model_path, CONFIG_NAME)
 
         torch.save(model_to_save.state_dict(), output_model_file)
         model_to_save.config.to_json_file(output_config_file)
-        tokenizer.save_vocabulary(output_dir)
+        tokenizer.save_vocabulary(model_path)
 
     destroy_process_group()
+
+
+def set_logging(args):
+    if args.local_rank == 0:
+        run = wandb.init(
+            entity='insane_gupta',
+            project=args.exp_name,
+            group=args.group_name,
+            job_type=args.job_name,
+            config=args,
+        )
+
+    return run
 
 
 if __name__ == "__main__":
@@ -494,12 +528,14 @@ if __name__ == "__main__":
     parser.add_argument("--student_model",
                         type=str,
                         default="bert-base-german-dbmdz-cased")
+    # models stored models/output_dir
     parser.add_argument("--output_dir",
                         type=str,
-                        default='models')
-    parser.add_argument("--checkpoint-path",
+                        default='name_exp_models')
+    # checkpoints stored checkpoints/checkpoint_name
+    parser.add_argument("--checkpoint-name",
                         type=str,
-                        default='checkpoints')
+                        default='name_exp_checkpoints')
 
     # Other parameters
     parser.add_argument("--max_seq_length",
@@ -557,7 +593,7 @@ if __name__ == "__main__":
                         help="random seed for initialization")
     # 4 GPUS use 8 as gradient accumulation steps, 8 GPUS use 16 as gradient accumulation steps
     parser.add_argument('--gradient_accumulation_steps',
-                        default=8,
+                        default=16,
                         type=int,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--fp16',
@@ -572,9 +608,10 @@ if __name__ == "__main__":
                         type=int,
                         default=1000)
 
+    # Logging parameters
+    parser.add_argument("--exp_name", type=str, help="Name of WANDDB experiment.", default="Test_TinyBERT-DE")
+    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="test_general-distillation")
+    parser.add_argument("--job_name", type=str, help="Name of WANDDB job.", default="8GPU")
+
     args = parser.parse_args()
-    main(args.pregenerated_data, args.teacher_model, args.student_model, args.output_dir,
-         args.max_seq_length, args.reduce_memory, args.do_eval, args.do_lower_case,
-         args.train_batch_size, args.eval_batch_size, args.learning_rate,
-         args.weight_decay, args.num_train_epochs, args.warmup_proportion, args.no_cuda,
-         args.local_rank, args.seed, args.gradient_accumulation_steps, args.fp16, args.continue_train, args.eval_step)
+    main(args)
