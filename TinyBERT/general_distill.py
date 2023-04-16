@@ -370,8 +370,10 @@ def main(args):
 
                 teacher_layer_num = len(teacher_atts)
                 student_layer_num = len(student_atts)
+                log_from_master(f"teacher_layer_num: {teacher_layer_num}, student_layer_num: {student_layer_num}")
                 assert teacher_layer_num % student_layer_num == 0
                 layers_per_block = int(teacher_layer_num / student_layer_num)
+                log_from_master(f"layers_per_block: {layers_per_block}")
                 new_teacher_atts = [teacher_atts[i * layers_per_block + layers_per_block - 1]
                                     for i in range(student_layer_num)]
 
@@ -382,13 +384,14 @@ def main(args):
                                               teacher_att)
                     att_loss += loss_mse(student_att, teacher_att)
 
+                # selects from the first layer of each block
                 new_teacher_reps = [teacher_reps[i * layers_per_block] for i in range(student_layer_num + 1)]
                 new_student_reps = student_reps
 
                 for student_rep, teacher_rep in zip(new_student_reps, new_teacher_reps):
                     rep_loss += loss_mse(student_rep, teacher_rep)
 
-                loss = att_loss + rep_loss
+                loss = (args.attn_scale * att_loss) + (args.rep_scale * rep_loss)
 
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
@@ -444,8 +447,6 @@ def main(args):
                             'teacher_model_state_dict': teacher_model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                         }, ckpt_path)
-                        output_optimizer_file = os.path.join(model_path, "optimizer.pt")
-                        torch.save(optimizer.state_dict(), output_optimizer_file)
 
                     # Log eval results
                     if (global_step + 1) % args.eval_step == 0:
@@ -607,7 +608,12 @@ if __name__ == "__main__":
     parser.add_argument('--eval_step',
                         type=int,
                         default=1000)
-
+    parser.add_argument('--attn_scale',
+                        type=float, help='how much to scale the attention loss',
+                        default=1.0)
+    parser.add_argument('--rep_scale',
+                        type=float, help='how much to scale the representation loss',
+                        default=1.0)
     # Logging parameters
     parser.add_argument("--exp_name", type=str, help="Name of WANDDB experiment.", default="Test_TinyBERT-DE")
     parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="test_general-distillation")

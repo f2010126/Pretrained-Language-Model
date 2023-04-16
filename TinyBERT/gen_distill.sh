@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=TinyGenDistill
-#SBATCH -p mlhiwidlc_gpu-rtx2080
+#SBATCH -p mlhiwidlc_gpu-rtx2080-advanced
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:8
 #SBATCH --time=20:00:00
