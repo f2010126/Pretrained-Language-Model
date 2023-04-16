@@ -71,12 +71,12 @@ def convert_example_to_features(example, tokenizer, max_seq_length):
     masked_lm_labels = example["masked_lm_labels"]
 
     if len(tokens) > max_seq_length:
-        logger.info('len(tokens): {}'.format(len(tokens)))
-        logger.info('tokens: {}'.format(tokens))
+        log_from_master('len(tokens): {}'.format(len(tokens)))
+        log_from_master('tokens: {}'.format(tokens))
         tokens = tokens[:max_seq_length]
 
     if len(tokens) != len(segment_ids):
-        logger.info('tokens: {}\nsegment_ids: {}'.format(tokens, segment_ids))
+        log_from_master('tokens: {}\nsegment_ids: {}'.format(tokens, segment_ids))
         segment_ids = [0] * len(tokens)
 
     assert len(tokens) == len(segment_ids) <= max_seq_length  # The preprocessed data should be already truncated
@@ -114,12 +114,12 @@ class PregeneratedDataset(Dataset):
         self.tokenizer = tokenizer
         self.epoch = epoch
         self.data_epoch = int(epoch % num_data_epochs)
-        logger.info('training_path: {}'.format(training_path))
+        log_from_master('training_path: {}'.format(training_path))
         data_file = training_path / "epoch_{}.json".format(self.data_epoch)
         metrics_file = training_path / "epoch_{}_metrics.json".format(self.data_epoch)
 
-        logger.info('data_file: {}'.format(data_file))
-        logger.info('metrics_file: {}'.format(metrics_file))
+        log_from_master('data_file: {}'.format(data_file))
+        log_from_master('metrics_file: {}'.format(metrics_file))
 
         assert data_file.is_file() and metrics_file.is_file()
         metrics = json.loads(metrics_file.read_text())
@@ -285,7 +285,7 @@ def main(args):
         # logger.info('p: {}'.format(p.nelement()))
         size += p.nelement()
 
-    logger.info('Total parameters: {}'.format(size))
+    log_from_master('Total parameters: {}'.format(size))
 
     # Prepare optimizer
     param_optimizer = list(student_model.named_parameters())
@@ -305,7 +305,6 @@ def main(args):
     ep_step = 0
     epochs_run = 0
     snapshot_path = os.path.join(checkpoint_path, 'resume_checkpoint.pt')
-    print(f"{snapshot_path} exists? {os.path.exists(snapshot_path)}")
     if os.path.exists(snapshot_path):
         print("Loading snapshot from {}".format(snapshot_path))
         loc = f"cuda:{local_rank}"
@@ -328,7 +327,7 @@ def main(args):
 
     # the original will have 0_0, the resuming will have something else
     logging_file = "{}_{}_log.txt".format(epochs_run, ep_step)
-    print("logging file: ", logging_file)
+    log_from_master(f"logging file: {logging_file} ")
     # General Distillation
     for epoch in trange(epochs_run, int(args.num_train_epochs), desc="Epoch"):
         epoch_dataset = PregeneratedDataset(epoch=epoch, training_path=args.pregenerated_data, tokenizer=tokenizer,
@@ -342,7 +341,7 @@ def main(args):
                                       shuffle=False, )
         #  make shuffling work properly across multiple epochs. 
         train_dataloader.sampler.set_epoch(epoch)
-
+        # running loss values for the epoch
         tr_loss = 0.
         tr_att_loss = 0.
         tr_rep_loss = 0.
@@ -384,19 +383,24 @@ def main(args):
                                               teacher_att)
                     att_loss += loss_mse(student_att, teacher_att)
 
+                    del student_att, teacher_att
+
                 # selects from the first layer of each block
                 new_teacher_reps = [teacher_reps[i * layers_per_block] for i in range(student_layer_num + 1)]
                 new_student_reps = student_reps
 
                 for student_rep, teacher_rep in zip(new_student_reps, new_teacher_reps):
                     rep_loss += loss_mse(student_rep, teacher_rep)
+                    del student_rep, teacher_rep
 
                 loss = (args.attn_scale * att_loss) + (args.rep_scale * rep_loss)
-
+                log_from_master(f"LOSS FOR THAT BATCH att_loss: {att_loss}, rep_loss: {rep_loss}, loss: {loss}")
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
+
+                log_from_master(f"scaled loss by {args.gradient_accumulation_steps}----->: {loss}")
 
                 if args.fp16:
                     optimizer.backward(loss)
@@ -415,13 +419,15 @@ def main(args):
                 mean_att_loss = tr_att_loss * args.gradient_accumulation_steps / nb_tr_steps
                 mean_rep_loss = tr_rep_loss * args.gradient_accumulation_steps / nb_tr_steps
 
+                log_from_master(f"RUNNING LOSS mean_loss: {mean_loss}, mean_att_loss: {mean_att_loss}, mean_rep_loss: {mean_rep_loss})")
+
                 if (step + 1) % args.gradient_accumulation_steps == 0:
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
 
                 # Logging and evaluation in main process
-                print("local_ rank  {} global_step: {}".format(local_rank, global_step))
+                log_from_master(f"local_ rank  {local_rank} global_step: {global_step}")
                 if local_rank == 0:
 
                     # Save a trained model
@@ -460,16 +466,16 @@ def main(args):
 
                         output_eval_file = os.path.join(model_path, logging_file)
                         with open(output_eval_file, "a") as writer:
-                            logger.info("***** Eval results *****")
+                            log_from_master("***** Eval results *****")
                             for key in sorted(result.keys()):
-                                logger.info("  %s = %s", key, str(result[key]))
+                                log_from_master(f"{key} = {str(result[key])}")
                                 writer.write("%s = %s\n" % (key, str(result[key])))
                         # save to checkpoints
                         output_eval_file = os.path.join(checkpoint_path, logging_file)
                         with open(output_eval_file, "a") as writer:
-                            logger.info("***** Eval results *****")
+                            log_from_master("***** Eval results *****")
                             for key in sorted(result.keys()):
-                                logger.info("  %s = %s", key, str(result[key]))
+                                log_from_master(f"{key} = {str(result[key])}")
                                 writer.write("%s = %s\n" % (key, str(result[key])))
 
                         run_logger.save(output_eval_file)
@@ -504,7 +510,7 @@ def main(args):
 
 
 def set_logging(args):
-    if args.local_rank == 0:
+    if dist.get_rank() == 0:
         run = wandb.init(
             entity='insane_gupta',
             project=args.exp_name,
@@ -512,8 +518,8 @@ def set_logging(args):
             job_type=args.job_name,
             config=args,
         )
-
-    return run
+        return run
+    return None
 
 
 if __name__ == "__main__":
