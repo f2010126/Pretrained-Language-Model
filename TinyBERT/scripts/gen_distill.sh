@@ -13,6 +13,7 @@
 
 echo "Activate environment for Job ID $SLURM_JOB_ID"
 export NCCL_DEBUG=INFO
+export CUDA_LAUNCH_BLOCKING=1
 source ~/tinybert_nlp/bin/activate
 
 echo 'Run Generate Distill Data'
@@ -20,5 +21,5 @@ cd $(ws_find zap_hpo_og)/TinyBert/TinyBERT
 GPU=$(nvidia-smi  -L | wc -l)
 echo 'Start of Script with GPU: '$GPU
 echo 'Train for 30 epochs'
-srun torchrun --standalone --nproc_per_node=gpu general_distill.py --eval_step 2 --num_train_epochs 30 --pregenerated_data 'data/ep_30_pretraining_data' --output_dir 'gen_distil30' --checkpoint-name 'gen_distil30' --exp_name 'TinyBERT-DE' --group_name 'general-distillation'
+srun torchrun --standalone --nproc_per_node=gpu general_distill.py --eval_step 2 --num_train_epochs 30 --pregenerated_data 'data/ep_30_pretraining_data' --output_dir 'gen_distil30' --checkpoint-name 'gen_distil30' --exp_name 'TinyBERT-DE-Ablations' --group_name 'general-distillation' --attn_scale 1.0 --rep_scale 1.0
 echo 'End of Script'

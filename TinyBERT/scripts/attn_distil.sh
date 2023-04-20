@@ -13,6 +13,7 @@
 
 echo "Activate environment for Job ID $SLURM_JOB_ID"
 export NCCL_DEBUG=INFO
+export CUDA_LAUNCH_BLOCKING=1
 source ~/tinybert_nlp/bin/activate
 
 echo 'Run Generate Distill Data with only Attention Loss'
