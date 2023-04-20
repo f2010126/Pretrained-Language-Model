@@ -622,7 +622,7 @@ class BertPreTrainedModel(nn.Module):
 
     def __init__(self, config, *inputs, **kwargs):
         super(BertPreTrainedModel, self).__init__()
-        if not isinstance(config, transformers.BertConfig):
+        if not isinstance(config, (transformers.BertConfig, BertConfig)):
             raise ValueError(
                 "Parameter config in `{}(config)` should be an instance of class `BertConfig` or AutoConfig. "
                 "To create a model from a Google pretrained model use "
@@ -926,6 +926,7 @@ class BertForPreTraining(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None,
                 masked_lm_labels=None, next_sentence_label=None):
+
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False)
         prediction_scores, seq_relationship_score = self.cls(

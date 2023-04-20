@@ -123,6 +123,15 @@ def prepare_embedding_retrieval(glove_file, vocab_size=100000):
 
 class DataAugmentor(object):
     def __init__(self, model, tokenizer, emb_norm, vocab, ids_to_tokens, M, N, p):
+# Model is the BERT model,
+# tokenizer is the BERT tokenizer,
+# emb_norm is the normalized embedding matrix,
+# vocab is the vocabulary,
+# ids_to_tokens is the mapping from id to token,
+# M is choosing from M most-likely words in the corresponding position
+# N is the number of times is the corpus expanded,
+# p is the Threshold probability p to replace current word
+
         self.model = model
         self.tokenizer = tokenizer
         self.emb_norm = emb_norm
@@ -179,6 +188,7 @@ class DataAugmentor(object):
 
         return list(filter(lambda x: x.find("##"), word_candidates))
 
+    # Model plus Glove
     def _word_augment(self, sentence, mask_token_idx, mask_token):
         word_pieces = self.tokenizer.tokenize(sentence)
         word_pieces = ['[CLS]'] + word_pieces
@@ -211,12 +221,14 @@ class DataAugmentor(object):
 
         return candidate_words
 
+# magic happens here.
     def augment(self, sent):
         candidate_sents = [sent]
 
         tokens = self.tokenizer.basic_tokenizer.tokenize(sent)
         candidate_words = {}
         for (idx, word) in enumerate(tokens):
+            # add the DE version here
             if _is_valid(word) and word.lower() not in StopWordsList:
                 candidate_words[idx] = self._word_augment(sent, idx, word)
         logger.info(candidate_words)
@@ -242,10 +254,11 @@ class AugmentProcessor(object):
         self.augmentor = augmentor
         self.glue_dir = glue_dir
         self.task_name = task_name
-        self.augment_ids = {'MRPC': [3, 4], 'MNLI': [8, 9], 'CoLA': [3], 'SST-2': [0],
+        # location of the texts. Cola has text in column 3, MRPC in column 3,4 etc.
+        self.augment_ids = {'MRPC': [3, 4], 'MNLI': [8, 9], 'CoLA': [3], 'SST-2': [0], 'amazon_eng':[0],
                             'STS-B': [7, 8], 'QQP': [3, 4], 'QNLI': [1, 2], 'RTE': [1, 2]}
 
-        self.filter_flags = { 'MRPC': True, 'MNLI': True, 'CoLA': False, 'SST-2': True,
+        self.filter_flags = { 'MRPC': True, 'MNLI': True, 'CoLA': False, 'SST-2': True, 'amazon_eng':True,
                               'STS-B': True, 'QQP': True, 'QNLI': True, 'RTE': True}
 
         assert self.task_name in self.augment_ids
@@ -256,6 +269,7 @@ class AugmentProcessor(object):
         output_filename = os.path.join(task_dir, "train_aug.tsv")
 
         augment_ids_ = self.augment_ids[self.task_name]
+        # ignore the first line incase of header
         filter_flag = self.filter_flags[self.task_name]
 
         with open(output_filename, 'w', newline='', encoding="utf-8") as f:
@@ -268,6 +282,7 @@ class AugmentProcessor(object):
                 for augment_id in augment_ids_:
                     sent = line[augment_id]
                     augmented_sents = self.augmentor.augment(sent)
+                    # add the sentences with the same end label
                     for augment_sent in augmented_sents:
                         line[augment_id] = augment_sent
                         writer.writerow(line)
@@ -279,13 +294,13 @@ class AugmentProcessor(object):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--pretrained_bert_model", default=None, type=str, required=True,
+    parser.add_argument("--pretrained_bert_model", default='models/bert-base-uncased', type=str,
                         help="Downloaded pretrained model (bert-base-cased/uncased) is under this folder")
-    parser.add_argument("--glove_embs", default=None, type=str, required=True,
+    parser.add_argument("--glove_embs", default='data/data_augmentation/glove.6B.300d.txt', type=str,
                         help="Glove word embeddings file")
-    parser.add_argument("--glue_dir", default=None, type=str, required=True,
+    parser.add_argument("--glue_dir", default='data/data_augmentation/glue_data', type=str,
                         help="GLUE data dir")
-    parser.add_argument("--task_name", default=None, type=str, required=True,
+    parser.add_argument("--task_name", default='amazon_eng', type=str,
                         help="Task(eg. CoLA, SST-2) that we want to do data augmentation for its train set")
     parser.add_argument("--N", default=30, type=int,
                         help="How many times is the corpus expanded?")
@@ -293,6 +308,12 @@ def main():
                         help="Choose from M most-likely words in the corresponding position")
     parser.add_argument("--p", default=0.4, type=float,
                         help="Threshold probability p to replace current word")
+
+    # Logging parameters
+    parser.add_argument("--language", type=str, help="Language to Augment.", default="eng")
+    parser.add_argument("--exp_name", type=str, help="Name of WANDDB experiment.", default="Test_TinyBERT-DE")
+    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="test_general-distillation")
+    parser.add_argument("--job_name", type=str, help="Name of WANDDB job.", default="8GPU")
 
     args = parser.parse_args()
     # logger.info(args)
@@ -305,9 +326,10 @@ def main():
         "STS-b": {"N": 30},
         "QQP": {"N": 10},
         "QNLI": {"N": 20},
-        "RTE": {"N": 30}
+        "RTE": {"N": 30},
+        "amazon_eng": {"N": 30},
     }
-
+    # pick the number of augmentations based on the task
     if args.task_name in default_params:
         args.N = default_params[args.task_name]["N"]
 
