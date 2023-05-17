@@ -26,11 +26,15 @@ import logging
 import os
 import random
 import sys
+import torch.distributed as dist
 
 import numpy as np
 import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
 from torch.nn import CrossEntropyLoss, MSELoss
@@ -52,12 +56,10 @@ fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 logger = logging.getLogger()
 
-oncloud = True
-try:
-    import moxing as mox
-except:
-    oncloud = False
 
+def log_from_master(msg):
+    if dist.get_rank() == 0:
+        logger.info(msg)
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
@@ -171,7 +173,7 @@ class MnliProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -217,7 +219,7 @@ class ColaProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -285,7 +287,7 @@ class StsbProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -361,7 +363,7 @@ class QnliProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -397,7 +399,7 @@ class RteProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -457,12 +459,16 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     label_map = {label: i for i, label in enumerate(label_list)}
 
     features = []
-    for (ex_index, example) in enumerate(examples):
-        if ex_index % 10000 == 0:
-            logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+    for (ex_index, example) in enumerate(tqdm(examples)):
+
+        if ex_index > 30000:
+            break
+        # if ex_index % 10000 == 0:
+        #     logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
         tokens_a = tokenizer.tokenize(example.text_a)
 
+        # If it is a pair of sentences, tokenize the second sentence
         tokens_b = None
         if example.text_b:
             tokens_b = tokenizer.tokenize(example.text_b)
@@ -645,32 +651,35 @@ def do_eval(model, task_name, eval_dataloader,
 
     return result
 
+def log_from_master(msg):
+    if dist.get_rank() == 0:
+        logger.info(msg)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
-                        default=None,
+                        default='data/data_augmentation/glue_data/SST-2',
                         type=str,
-                        required=True,
+
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--teacher_model",
-                        default=None,
+                        default='models/FineTunedModels/bert-base-uncased-sst2-int8-unstructured80',
                         type=str,
                         help="The teacher model dir.")
     parser.add_argument("--student_model",
-                        default=None,
+                        default='models/GeneralDistilledModels/TinyBERT_General_6L_768D',
                         type=str,
-                        required=True,
+
                         help="The student model dir.")
     parser.add_argument("--task_name",
-                        default=None,
+                        default='SST-2',
                         type=str,
-                        required=True,
+
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default=None,
+                        default='models/InterMedDistill/TestTinyBert',
                         type=str,
-                        required=True,
+
                         help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument("--cache_dir",
                         default="",
@@ -706,7 +715,7 @@ def main():
                         metavar='W',
                         help='weight decay')
     parser.add_argument("--num_train_epochs",
-                        default=3.0,
+                        default=1.0,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
@@ -715,8 +724,12 @@ def main():
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
     parser.add_argument("--no_cuda",
-                        action='store_true',
+                        action='store_true' ,
                         help="Whether not to use CUDA when available")
+    parser.add_argument("--local_rank",
+                        type=int,
+                        default=-1,
+                        help="local_rank for distributed training on gpus")
     parser.add_argument('--seed',
                         type=int,
                         default=42,
@@ -728,12 +741,12 @@ def main():
 
     # added arguments
     parser.add_argument('--aug_train',
-                        action='store_true')
+                        action='store_false') # store_true
     parser.add_argument('--eval_step',
                         type=int,
-                        default=50)
+                        default=5)
     parser.add_argument('--pred_distill',
-                        action='store_true')
+                        action='store_true', help='Do predicate layer distillation on augmented data. Default is False')
     parser.add_argument('--data_url',
                         type=str,
                         default="")
@@ -742,7 +755,25 @@ def main():
                         default=1.)
 
     args = parser.parse_args()
+
+    # Multi Gpu Stuff
+    device_count = torch.cuda.device_count()
+    args.rank = int(os.getenv('RANK', '0'))
+    init_process_group(backend="nccl")
+
+    args.local_rank = int(os.environ["LOCAL_RANK"])
+    print(f'local_rank: {args.local_rank} and Rank {args.rank}')
+    args.world_size = int(os.getenv("WORLD_SIZE", '1'))
     logger.info('The args: {}'.format(args))
+
+
+    torch.cuda.set_device(args.local_rank)
+    device = torch.device("cuda", args.local_rank)
+    print('device_id: %s' % args.local_rank)
+    print('device_count: %s, rank: %s, world_size: %s' % (device_count, args.rank, args.world_size))
+
+
+
 
     processors = {
         "cola": ColaProcessor,
@@ -780,7 +811,9 @@ def main():
         "qnli": {"num_train_epochs": 10, "max_seq_length": 128},
         "rte": {"num_train_epochs": 20, "max_seq_length": 128}
     }
+    log_from_master(f'The default parameters: {default_params}')
 
+    # Type of metrics acc means Accuracy/F1, corr means Pearson correlation, mcc means Matthews correlation
     acc_tasks = ["mnli", "mrpc", "sst-2", "qqp", "qnli", "rte"]
     corr_tasks = ["sts-b"]
     mcc_tasks = ["cola"]
@@ -802,11 +835,12 @@ def main():
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-    # Prepare task settings
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    # Prepare task settings only in Rank 0
+    if args.local_rank == 0:
+        if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
+            raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
+        if not os.path.exists(args.output_dir):
+            os.makedirs(args.output_dir)
 
     task_name = args.task_name.lower()
 
@@ -825,8 +859,11 @@ def main():
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
+    # Student model taken from HF. It has a 30522 vocab size because BERT BASE UNCASED
     tokenizer = BertTokenizer.from_pretrained(args.student_model, do_lower_case=args.do_lower_case)
 
+    # Which data to use acc to stage. Intermediate distillation use augmented data.
+    # It will load the augmented data from the data_augmentation step.
     if not args.do_eval:
         if not args.aug_train:
             train_examples = processor.get_train_examples(args.data_dir)
@@ -844,8 +881,13 @@ def main():
         train_features = convert_examples_to_features(train_examples, label_list,
                                                       args.max_seq_length, tokenizer, output_mode)
         train_data, _ = get_tensor_data(output_mode, train_features)
-        train_sampler = RandomSampler(train_data)
+        logger.info("Converted and tokenised the training data.")
+        # train_sampler = RandomSampler(train_data)
+        train_sampler = DistributedSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
+
+
+    logger.info(f"Training Parameters batch--> {args.train_batch_size} epoch--> {args.num_train_epochs} grad_acc--> {args.gradient_accumulation_steps}")
 
     eval_examples = processor.get_dev_examples(args.data_dir)
     eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
@@ -853,12 +895,18 @@ def main():
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
+    # why is the teacher model TinyBERT?!
+
     if not args.do_eval:
         teacher_model = TinyBertForSequenceClassification.from_pretrained(args.teacher_model, num_labels=num_labels)
         teacher_model.to(device)
 
     student_model = TinyBertForSequenceClassification.from_pretrained(args.student_model, num_labels=num_labels)
     student_model.to(device)
+    student_model = DDP(student_model,
+                        device_ids=[args.local_rank], output_device=args.local_rank,
+                        find_unused_parameters=True)
+
     if args.do_eval:
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
@@ -876,8 +924,12 @@ def main():
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
         if n_gpu > 1:
-            student_model = torch.nn.DataParallel(student_model)
-            teacher_model = torch.nn.DataParallel(teacher_model)
+            student_model = DDP(student_model,
+                                device_ids=[args.local_rank], output_device=args.local_rank,
+                                find_unused_parameters=True)
+            teacher_model = DDP(teacher_model,
+                                device_ids=[args.local_rank], output_device=args.local_rank,
+                                find_unused_parameters=True)
         # Prepare optimizer
         param_optimizer = list(student_model.named_parameters())
         size = 0
@@ -893,6 +945,7 @@ def main():
         ]
         schedule = 'warmup_linear'
         if not args.pred_distill:
+            # no scheduling for intermediate distillation
             schedule = 'none'
         optimizer = BertAdam(optimizer_grouped_parameters,
                              schedule=schedule,
@@ -939,6 +992,7 @@ def main():
                     teacher_logits, teacher_atts, teacher_reps = teacher_model(input_ids, segment_ids, input_mask)
 
                 if not args.pred_distill:
+                    # Intermediate layer distillation
                     teacher_layer_num = len(teacher_atts)
                     student_layer_num = len(student_atts)
                     assert teacher_layer_num % student_layer_num == 0
@@ -965,21 +1019,25 @@ def main():
                     tr_att_loss += att_loss.item()
                     tr_rep_loss += rep_loss.item()
                 else:
+                    # Do predicate Layer distillation
                     if output_mode == "classification":
                         cls_loss = soft_cross_entropy(student_logits / args.temperature,
                                                       teacher_logits / args.temperature)
+                        log_from_master(f'cls_loss: {cls_loss.item()} at step {step}')
                     elif output_mode == "regression":
                         loss_mse = MSELoss()
                         cls_loss = loss_mse(student_logits.view(-1), label_ids.view(-1))
 
                     loss = cls_loss
                     tr_cls_loss += cls_loss.item()
+                    log_from_master(f'cls_loss: {cls_loss.item()} at step {step}')
 
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
 
+                log_from_master(f'loss: {loss.item()} at step {step}')
                 loss.backward()
 
                 tr_loss += loss.item()
@@ -993,9 +1051,9 @@ def main():
 
                 if (global_step + 1) % args.eval_step == 0:
                     logger.info("***** Running evaluation *****")
-                    logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
-                    logger.info("  Num examples = %d", len(eval_examples))
-                    logger.info("  Batch size = %d", args.eval_batch_size)
+                    logger.info("  Epoch = {} iter {} step RANK {} ".format(epoch_, global_step, dist.get_rank()))
+                    logger.info("  Rank = %d Num examples = %d",dist.get_rank(), len(eval_examples))
+                    logger.info(" Rank = %d Batch size = %d",dist.get_rank(),  args.eval_batch_size)
 
                     student_model.eval()
 
@@ -1014,7 +1072,11 @@ def main():
                     result['rep_loss'] = rep_loss
                     result['loss'] = loss
 
-                    result_to_file(result, output_eval_file)
+                    if args.local_rank == 0:
+                        print("***** Eval results *****")
+                        for key in sorted(result.keys()):
+                            print("  %s = %s", key, str(result[key]))
+                        result_to_file(result, output_eval_file)
 
                     if not args.pred_distill:
                         save_model = True
@@ -1033,7 +1095,7 @@ def main():
                             best_dev_acc = result['mcc']
                             save_model = True
 
-                    if save_model:
+                    if save_model and args.local_rank == 0:
                         logger.info("***** Save model *****")
 
                         model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
@@ -1045,7 +1107,8 @@ def main():
                         output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
 
                         torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
+                        # unwrap to access config
+                        model_to_save.module.config.to_json_file(output_config_file)
                         tokenizer.save_vocabulary(args.output_dir)
 
                         # Test mnli-mm
@@ -1079,14 +1142,111 @@ def main():
 
                             task_name = 'mnli'
 
-                        if oncloud:
-                            logging.info(mox.file.list_directory(args.output_dir, recursive=True))
-                            logging.info(mox.file.list_directory('.', recursive=True))
-                            mox.file.copy_parallel(args.output_dir, args.data_url)
-                            mox.file.copy_parallel('.', args.data_url)
-
                     student_model.train()
 
 
+def parse_args():
+    # TODO: Set Values HERE
+    parser = argparse.ArgumentParser(description="Task Language Distillation")
+    parser.add_argument("--data_dir",
+                        default='data/data_augmentation/glue_data/SST-2',
+                        type=str,
+
+                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+    parser.add_argument("--teacher_model",
+                        default='models/FineTunedModels/bert-base-uncased-sst2-int8-unstructured80',
+                        type=str,
+                        help="The teacher model dir.")
+    parser.add_argument("--student_model",
+                        default='models/GeneralDistilledModels/TinyBERT_General_6L_768D',
+                        type=str,
+
+                        help="The student model dir.")
+    parser.add_argument("--task_name",
+                        default='SST-2',
+                        type=str,
+
+                        help="The name of the task to train.")
+    parser.add_argument("--output_dir",
+                        default='models/InterMedDistill/TestTinyBert',
+                        type=str,
+
+                        help="The output directory where the model predictions and checkpoints will be written.")
+    parser.add_argument("--cache_dir",
+                        default="",
+                        type=str,
+                        help="Where do you want to store the pre-trained models downloaded from s3")
+    parser.add_argument("--max_seq_length",
+                        default=128,
+                        type=int,
+                        help="The maximum total input sequence length after WordPiece tokenization. \n"
+                             "Sequences longer than this will be truncated, and sequences shorter \n"
+                             "than this will be padded.")
+    parser.add_argument("--do_eval",
+                        action='store_true',
+                        help="Whether to run eval on the dev set.")
+    parser.add_argument("--do_lower_case",
+                        action='store_true',
+                        help="Set this flag if you are using an uncased model.")
+    parser.add_argument("--train_batch_size",
+                        default=32,
+                        type=int,
+                        help="Total batch size for training.")
+    parser.add_argument("--eval_batch_size",
+                        default=32,
+                        type=int,
+                        help="Total batch size for eval.")
+    parser.add_argument("--learning_rate",
+                        default=5e-5,
+                        type=float,
+                        help="The initial learning rate for Adam.")
+    parser.add_argument('--weight_decay', '--wd',
+                        default=1e-4,
+                        type=float,
+                        metavar='W',
+                        help='weight decay')
+    parser.add_argument("--num_train_epochs",
+                        default=1.0,
+                        type=float,
+                        help="Total number of training epochs to perform.")
+    parser.add_argument("--warmup_proportion",
+                        default=0.1,
+                        type=float,
+                        help="Proportion of training to perform linear learning rate warmup for. "
+                             "E.g., 0.1 = 10%% of training.")
+    parser.add_argument("--no_cuda",
+                        action='store_true',
+                        help="Whether not to use CUDA when available")
+    parser.add_argument("--local_rank",
+                        type=int,
+                        default=-1,
+                        help="local_rank for distributed training on gpus")
+    parser.add_argument('--seed',
+                        type=int,
+                        default=42,
+                        help="random seed for initialization")
+    parser.add_argument('--gradient_accumulation_steps',
+                        type=int,
+                        default=1,
+                        help="Number of updates steps to accumulate before performing a backward/update pass.")
+
+    # added arguments
+    parser.add_argument('--aug_train',
+                        action='store_false')  # store_true
+    parser.add_argument('--eval_step',
+                        type=int,
+                        default=5)
+    parser.add_argument('--pred_distill',
+                        action='store_true', help='Do predicate layer distillation on augmented data. Default is False')
+    parser.add_argument('--data_url',
+                        type=str,
+                        default="")
+    parser.add_argument('--temperature',
+                        type=float,
+                        default=1.)
+
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
     main()
