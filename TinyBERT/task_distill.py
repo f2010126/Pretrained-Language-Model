@@ -458,6 +458,11 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
     features = []
     for (ex_index, example) in enumerate(examples):
+
+        if ex_index > 90000:
+            break
+
+
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
@@ -743,6 +748,7 @@ def main():
 
     args = parser.parse_args()
     logger.info('The args: {}'.format(args))
+    # local_rank = int(os.environ["LOCAL_RANK"])
 
     processors = {
         "cola": ColaProcessor,
@@ -806,6 +812,7 @@ def main():
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
+        # only main process make can dir
         os.makedirs(args.output_dir)
 
     task_name = args.task_name.lower()
@@ -846,19 +853,21 @@ def main():
         train_data, _ = get_tensor_data(output_mode, train_features)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
+        logger.info("***** Loaded Training Data Loaders *****")
 
     eval_examples = processor.get_dev_examples(args.data_dir)
     eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
     eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
-
+    logger.info("***** Loaded Eval Data Loaders *****")
     if not args.do_eval:
         teacher_model = TinyBertForSequenceClassification.from_pretrained(args.teacher_model, num_labels=num_labels)
         teacher_model.to(device)
 
     student_model = TinyBertForSequenceClassification.from_pretrained(args.student_model, num_labels=num_labels)
     student_model.to(device)
+    logger.info("***** Loaded Models *****")
     if args.do_eval:
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
@@ -922,21 +931,26 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
 
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+                logger.info(f'step: {step}')
                 batch = tuple(t.to(device) for t in batch)
 
                 input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch
+                logger.info(f'input_ids: {input_ids}')
                 if input_ids.size()[0] != args.train_batch_size:
+                    logger.info(f'this continues')
                     continue
 
                 att_loss = 0.
                 rep_loss = 0.
                 cls_loss = 0.
-
+                logger.info(f'beginning student forward')
                 student_logits, student_atts, student_reps = student_model(input_ids, segment_ids, input_mask,
                                                                            is_student=True)
+                logger.info(f'student_logits: {student_logits}')
 
                 with torch.no_grad():
                     teacher_logits, teacher_atts, teacher_reps = teacher_model(input_ids, segment_ids, input_mask)
+                    logger.info(f'teacher_logits: {teacher_logits}')
 
                 if not args.pred_distill:
                     teacher_layer_num = len(teacher_atts)
@@ -981,6 +995,7 @@ def main():
                     loss = loss / args.gradient_accumulation_steps
 
                 loss.backward()
+                logger.info(f'loss: {loss}')
 
                 tr_loss += loss.item()
                 nb_tr_examples += label_ids.size(0)

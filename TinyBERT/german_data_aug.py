@@ -23,7 +23,6 @@ import logging
 import csv
 import argparse
 
-
 import torch
 import numpy as np
 
@@ -37,16 +36,26 @@ logger = logging.getLogger(__name__)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-StopWordsList = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll", "you'd", 'your', 'yours',
-                 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself', 'it', "it's", 'its', 'itself',
-                 'they', 'them', 'their', 'theirs', 'themselves', 'this', 'that', "that'll", 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be',
-                 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because',
-                 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after',
-                 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here',
-                 'there', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
-                 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 'd', 'll', 'm', 'o', 're', 've',
-                 'y', 'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn', "hadn't", 'hasn', "hasn't", 'haven',
-                 "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't", 'shan', "shan't", 'shouldn', "shouldn't",
+StopWordsList = ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll",
+                 "you'd", 'your', 'yours',
+                 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself',
+                 'it', "it's", 'its', 'itself',
+                 'they', 'them', 'their', 'theirs', 'themselves', 'this', 'that', "that'll", 'these', 'those', 'am',
+                 'is', 'are', 'was', 'were', 'be',
+                 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and',
+                 'but', 'if', 'or', 'because',
+                 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
+                 'through', 'during', 'before', 'after',
+                 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again',
+                 'further', 'then', 'once', 'here',
+                 'there', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+                 'not', 'only', 'own', 'same', 'so',
+                 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now',
+                 'd', 'll', 'm', 'o', 're', 've',
+                 'y', 'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn',
+                 "hadn't", 'hasn', "hasn't", 'haven',
+                 "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't", 'shan',
+                 "shan't", 'shouldn', "shouldn't",
                  'wasn', "wasn't", 'weren', "weren't", 'won', "won't", 'wouldn', "wouldn't", "'s", "'re"]
 
 
@@ -123,14 +132,14 @@ def prepare_embedding_retrieval(glove_file, vocab_size=100000):
 
 class DataAugmentor(object):
     def __init__(self, model, tokenizer, emb_norm, vocab, ids_to_tokens, M, N, p):
-# Model is the BERT model,
-# tokenizer is the BERT tokenizer,
-# emb_norm is the normalized embedding matrix,
-# vocab is the vocabulary,
-# ids_to_tokens is the mapping from id to token,
-# M is choosing from M most-likely words in the corresponding position
-# N is the number of times is the corpus expanded,
-# p is the Threshold probability p to replace current word
+        # Model is the BERT model,
+        # tokenizer is the BERT tokenizer,
+        # emb_norm is the normalized embedding matrix,
+        # vocab is the vocabulary,
+        # ids_to_tokens is the mapping from id to token,
+        # M is choosing from M most-likely words in the corresponding position
+        # N is the number of times is the corpus expanded,
+        # p is the Threshold probability p to replace current word
 
         self.model = model
         self.tokenizer = tokenizer
@@ -152,7 +161,7 @@ class DataAugmentor(object):
 
         candidate_ids = np.argsort(-dist)[:self.M]
         candidate_words = [self.ids_to_tokens[idx] for idx in candidate_ids][:self.M]
-        
+
         if word.istitle():
             # capitialize the first letter of each word to preserve case
             candidate_words = [w.title() for w in candidate_words]
@@ -161,7 +170,7 @@ class DataAugmentor(object):
     def _masked_language_model(self, sent, word_pieces, mask_id):
         if mask_id >= 512:
             return []
-      
+
         tokenized_text = self.tokenizer.tokenize(sent)
         tokenized_text = ['[CLS]'] + tokenized_text
         tokenized_len = len(tokenized_text)
@@ -215,13 +224,13 @@ class DataAugmentor(object):
             candidate_words = self._word_distance(mask_token)
         else:
             logger.info("invalid input sentence!")
-        
-        if len(candidate_words)==0:
+
+        if len(candidate_words) == 0:
             candidate_words.append(mask_token)
 
         return candidate_words
 
-# magic happens here.
+    # magic happens here.
     def augment(self, sent):
         candidate_sents = [sent]
 
@@ -255,18 +264,21 @@ class AugmentProcessor(object):
         self.glue_dir = glue_dir
         self.task_name = task_name
         # location of the texts. Cola has text in column 3, MRPC in column 3,4 etc.
-        self.augment_ids = {'MRPC': [3, 4], 'MNLI': [8, 9], 'CoLA': [3], 'SST-2': [0], 'amazon_eng':[0],
-                            'STS-B': [7, 8], 'QQP': [3, 4], 'QNLI': [1, 2], 'RTE': [1, 2]}
+        self.augment_ids = {'MRPC': [3, 4], 'MNLI': [8, 9], 'CoLA': [3], 'SST-2': [0], 'amazon_eng': [0],
+                            'STS-B': [7, 8], 'QQP': [3, 4], 'QNLI': [1, 2], 'RTE': [1, 2], 'amazon_de': [0],}
 
-        self.filter_flags = { 'MRPC': True, 'MNLI': True, 'CoLA': False, 'SST-2': True, 'amazon_eng':True,
-                              'STS-B': True, 'QQP': True, 'QNLI': True, 'RTE': True}
+        self.filter_flags = {'MRPC': True, 'MNLI': True, 'CoLA': False, 'SST-2': True, 'amazon_eng': True,
+                             'STS-B': True, 'QQP': True, 'QNLI': True, 'RTE': True, 'amazon_de': True,}
 
         assert self.task_name in self.augment_ids
 
     def read_augment_write(self):
         task_dir = os.path.join(self.glue_dir, self.task_name)
         train_samples = _read_tsv(os.path.join(task_dir, "train.tsv"))
-        output_filename = os.path.join(task_dir, "train_aug1.tsv")
+        output_dir = os.path.join(task_dir,f"{self.augmentor.N}" )
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        output_filename = os.path.join(output_dir ,f"train_aug.tsv")
 
         augment_ids_ = self.augment_ids[self.task_name]
         # ignore the first line incase of header
@@ -287,20 +299,20 @@ class AugmentProcessor(object):
                         line[augment_id] = augment_sent
                         writer.writerow(line)
 
-                if (i+1) % 1000 == 0:
-                    logger.info("Having been processing {} examples".format(str(i+1)))
+                if (i + 1) % 1000 == 0:
+                    logger.info("Having been processing {} examples".format(str(i + 1)))
 
 
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--pretrained_bert_model", default='models/bert-base-uncased', type=str,
+    parser.add_argument("--pretrained_bert_model", default='models/bert-base-german-uncased', type=str,
                         help="Downloaded pretrained model (bert-base-cased/uncased) is under this folder")
-    parser.add_argument("--glove_embs", default='data/data_augmentation/glove.6B.300d.txt', type=str,
+    parser.add_argument("--glove_embs", default='data/data_augmentation/de_glove_embeddings.txt', type=str,
                         help="Glove word embeddings file")
     parser.add_argument("--glue_dir", default='data/data_augmentation/glue_data', type=str,
                         help="GLUE data dir")
-    parser.add_argument("--task_name", default='amazon_eng', type=str,
+    parser.add_argument("--task_name", default='amazon_de', type=str,
                         help="Task(eg. CoLA, SST-2) that we want to do data augmentation for its train set")
     parser.add_argument("--N", default=30, type=int,
                         help="How many times is the corpus expanded?")
@@ -328,10 +340,11 @@ def main():
         "QNLI": {"N": 20},
         "RTE": {"N": 30},
         "amazon_eng": {"N": 30},
+        "amazon_de": {"N": 30},
     }
     # pick the number of augmentations based on the task
-    if args.task_name in default_params:
-        args.N = default_params[args.task_name]["N"]
+    # if args.task_name in default_params:
+        # args.N = default_params[args.task_name]["N"]
 
     # Prepare data augmentor
     tokenizer = BertTokenizer.from_pretrained(args.pretrained_bert_model)

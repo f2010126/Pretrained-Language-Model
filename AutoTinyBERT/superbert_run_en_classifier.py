@@ -204,7 +204,7 @@ class MrpcProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -241,7 +241,7 @@ class MnliProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -287,7 +287,7 @@ class ColaProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -320,7 +320,7 @@ class Sst2Processor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -355,7 +355,7 @@ class StsbProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -391,7 +391,7 @@ class QqpProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -431,7 +431,7 @@ class QnliProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""
@@ -467,7 +467,7 @@ class RteProcessor(DataProcessor):
 
     def get_aug_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "train_aug.tsv")), "aug")
+            self._read_tsv(os.path.join(data_dir, "train_aug1.tsv")), "aug")
 
     def get_labels(self):
         """See base class."""

@@ -1,0 +1,146 @@
+from pytorch_lightning import seed_everything, Trainer
+from datamodule_glue import GLUEDataModule, GlueModule
+from GlueLightningModule import GLUETransformer
+from pytorch_lightning.loggers import WandbLogger
+import argparse
+import wandb
+import torchmetrics.functional as F
+import time
+import torch
+
+
+# should only get hpo config, and data dir.
+def train_model(args, config=None):
+    seed_everything(args.seed)
+
+    # set up data loaders
+    dm = GlueModule(model_name_or_path=config['model'], task_name=args.task_name,
+                    max_seq_length=config['max_seq_length'], train_batch_size=config['train_batch_size_gpu'],
+                    eval_batch_size=config['eval_batch_size_gpu'], )
+    dm.setup("fit")
+    # set up model and experiment
+    model = GLUETransformer(
+        model_name_or_path=config['model'],
+        num_labels=dm.num_labels,
+        eval_splits=dm.eval_splits,
+        task_name=dm.task_name,
+        learning_rate=config['learning_rate'],
+        adam_epsilon=1e-8,
+        warmup_steps=0,
+        weight_decay=0.0,
+        train_batch_size=config['train_batch_size_gpu'],
+        eval_batch_size=config['eval_batch_size_gpu'],
+        optimizer_name=config['optimizer_name'],
+        scheduler_name=config['scheduler_name'],
+    )
+
+    # set up logger
+    wandb_logger = WandbLogger(entity="insane_gupta",
+                               project=args.project_name,  # group runs in "MNIST" project
+                               name=args.run_name,  # individual runs within project
+                               tags=["bert", "pytorch-lightning"],
+                               group="bert",
+                               log_model='all')  # log all new checkpoints during training
+
+    # set up trainer
+    n_devices = torch.cuda.device_count()
+    accelerator = 'cpu' if n_devices == 0 else 'auto'
+    trainer = Trainer(
+        logger=wandb_logger,
+        max_epochs=config['num_train_epochs'],
+        accelerator=accelerator,
+        devices='auto',  # Use whatver device is available
+        strategy="ddp",
+    )
+    # train model
+    print("Training model")
+    trainer.fit(model, datamodule=dm)
+    print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
+    # evaluate best model
+    trainer.test(model, dataloaders=dm.test_dataloader())
+    test_acc = trainer.logged_metrics
+    print(f"Test accuracy: {test_acc}")
+    wandb.finish()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Adapter Training")
+
+    parser.add_argument("--model",
+                        default='bert-base-uncased',
+                        type=str,
+                        help="Model Name")
+
+    parser.add_argument("--task_name",
+                        default='sst2',
+                        type=str,
+                        help="The name of the task to train.")
+
+    parser.add_argument("--output_dir",
+                        default='./adapter_training_output',
+                        type=str,
+                        help="The output directory where the model predictions and checkpoints will be written.")
+
+    # Tokenizer
+    parser.add_argument("--max_seq_length",
+                        default=256,
+                        type=int,
+                        help="The maximum total input sequence length after WordPiece tokenization. \n"
+                             "Sequences longer than this will be truncated, and sequences shorter \n"
+                             "than this will be padded.")
+
+    parser.add_argument("--do_lower_case",
+                        action='store_true',
+                        help="Set this flag if you are using an uncased model.")
+
+    parser.add_argument("--train_batch_size_gpu",
+                        default=32,
+                        type=int,
+                        help="Per GPU batch size for training.")
+
+    parser.add_argument("--eval_batch_size_gpu",
+                        default=32,
+                        type=int,
+                        help="Total batch size for eval.")
+
+    parser.add_argument("--learning_rate",
+                        default=3e-3,
+                        type=float,
+                        help="The initial learning rate for Adam.")
+
+    parser.add_argument("--optimizer_name",
+                        default='AdamW',
+                        type=str,
+                        help="Optimiser name default AdamW.")
+
+    parser.add_argument("--scheduler_name",
+                        default='linear',
+                        type=str,
+                        help="Scheduler name default linear.")
+
+    parser.add_argument("--num_train_epochs",
+                        default=2,
+                        type=int,
+                        help="Total number of training epochs to perform.")
+    # Logging
+    parser.add_argument("--seed",
+                        default=42,
+                        type=int,
+                        help="Seed used for training and evaluation.")
+    parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="Adapters")
+    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="BERT")
+    parser.add_argument("--run_name", type=str, help="Name of WANDDB run.", default="Bert-Adapter-Training")
+
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    start = time.time()
+    args = parse_args()
+    config = vars(args)
+    train_model(args=args,config=config)
+
+    end = time.time()
+    hours, rem = divmod(end - start, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print("{:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))

@@ -1,0 +1,6 @@
+adapter-transformers
+datasets
+"ray[tune]"
+torch
+torchvision
+pytorch-lightning

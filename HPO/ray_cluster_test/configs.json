@@ -1,0 +1,4 @@
+[[0, 0, 0], {"dropout_rate": 0.7381690035951894, "lr": 0.011266445435968761, "num_conv_layers": 2, "num_fc_units": 98, "num_filters_1": 35, "optimizer": "SGD", "num_filters_2": 8, "sgd_momentum": 0.1340944868351691}, {"model_based_pick": false}]
+[[1, 0, 0], {"dropout_rate": 0.6046202517455738, "lr": 6.716410735455158e-06, "num_conv_layers": 1, "num_fc_units": 40, "num_filters_1": 44, "optimizer": "Adam"}, {"model_based_pick": false}]
+[[2, 0, 0], {"dropout_rate": 0.4980633504823175, "lr": 0.001996468951450202, "num_conv_layers": 2, "num_fc_units": 11, "num_filters_1": 6, "optimizer": "Adam", "num_filters_2": 4}, {"model_based_pick": false}]
+[[3, 0, 0], {"dropout_rate": 0.5564416275079398, "lr": 0.055254606796313076, "num_conv_layers": 3, "num_fc_units": 12, "num_filters_1": 12, "optimizer": "SGD", "num_filters_2": 35, "num_filters_3": 37, "sgd_momentum": 0.15598927982459904}, {"model_based_pick": false}]
