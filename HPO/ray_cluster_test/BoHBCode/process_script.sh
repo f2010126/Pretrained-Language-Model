@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #SBATCH --job-name=DDG
 #SBATCH -p mlhiwidlc_gpu-rtx2080-advanced
-
+#SBATCH --nodes=2 # number of nodes
 #SBATCH --gres=gpu:4 # I only want 4 gpus per node right now var will be SLURM_GPUS_ON_NODE
 #SBATCH -a 0-1 # array size
 #SBATCH --time=00:5:00
