@@ -23,6 +23,7 @@ class GLUETransformer(LightningModule):
             eval_splits: Optional[list] = None,
             optimizer_name: str = "AdamW",
             scheduler_name: str = "linear",
+            hyperparameters: Optional[dict] = None,
             **kwargs,
     ):
         super().__init__()
@@ -30,18 +31,19 @@ class GLUETransformer(LightningModule):
         self.validation_step_outputs = []
 
         self.task = 'binary' if num_labels == 2 else 'multiclass'
+        self.hyperparams = hyperparameters
 
         self.save_hyperparameters()
-        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=num_labels)
-
-        self.config = AutoConfig.from_pretrained(model_name_or_path, num_labels=num_labels)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, config=self.config)
-        self.metric = evaluate.load(
-            "glue", self.hparams.task_name, experiment_id=datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-        )
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
-        self.optimizer_name = optimizer_name
-        self.scheduler_name = scheduler_name
+
+        self.config = AutoConfig.from_pretrained(hyperparameters['model_name_or_path'], num_labels=num_labels)
+        self.model = AutoModelForSequenceClassification.from_pretrained(hyperparameters['model_name_or_path'], config=self.config)
+        # self.metric = evaluate.load(
+        #     "glue", self.hparams.task_name, experiment_id=datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+        # )
+        self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
+        self.optimizer_name = hyperparameters['optimizer_name']
+        self.scheduler_name = hyperparameters['scheduler_name']
         self.train_metric = evaluate.load("glue", task_name)
 
         self.prepare_data_per_node = True
@@ -92,10 +94,10 @@ class GLUETransformer(LightningModule):
         ]
 
         if self.optimizer_name == "AdamW":
-            optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate,
+            optimizer = AdamW(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'],
                               eps=self.hparams.adam_epsilon)
         elif self.optimizer_name == "Adam":
-            optimizer = Adam(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+            optimizer = Adam(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'], eps=self.hparams.adam_epsilon)
 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,

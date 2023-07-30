@@ -5,6 +5,7 @@ from transformers import AutoTokenizer
 import torch
 import os
 import pandas as pd
+from pathlib import Path
 
 
 class GLUEDataModule(LightningDataModule):
@@ -271,9 +272,11 @@ class AmazonMultiReview(LightningDataModule):
         self.label_column = label_column
         self.encode_columns = encode_columns
         #  Tokenize the dataset
-        if not os.path.isfile(f'{self.task_name}_tokenized_data.pt'):
+        if not os.path.isfile(f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt'):
             print("File not exist")
             self.prepare_data()
+        else:
+            print("File exist. Load Tokenized data")
 
     def clean_data(self, example):
         cols = self.encode_columns
@@ -302,12 +305,21 @@ class AmazonMultiReview(LightningDataModule):
             dataset[split].set_format(type="torch", columns=columns)
 
         # save the tokenized data to disk
-        torch.save(dataset, f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
+        try:
+            Path(f'{self.task_metadata["tokenize_folder_name"]}').mkdir(parents=True, exist_ok=True)
+            torch.save(dataset, f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
+        except:
+            print("File already exist")
         print(f'Dataset Tokenised')
 
     def setup(self, stage: str):
         # load data here
-        self.dataset = torch.load(f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
+        try:
+            self.dataset = torch.load(f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
+        except:
+            print("File not exist")
+            self.prepare_data()
+            self.dataset = torch.load(f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
         print('dataset loaded')
 
@@ -443,12 +455,12 @@ if __name__ == "__main__":
                            encode_columns=['review_body', 'review_title'])
     dm.setup("fit")
 
-    dm = TyqiangzData("distilbert-base-uncased",
-                      task_name="tyqiangz/multilingual-sentiments",
-                      max_seq_length=256,
-                      train_batch_size=32,
-                      label_column='label',
-                      encode_columns=['text'])
-    # dm.prepare_data()
-    dm.setup("fit")
-    next(iter(dm.train_dataloader()))
+    # dm = TyqiangzData("distilbert-base-uncased",
+    #                   task_name="tyqiangz/multilingual-sentiments",
+    #                   max_seq_length=256,
+    #                   train_batch_size=32,
+    #                   label_column='label',
+    #                   encode_columns=['text'])
+    # # dm.prepare_data()
+    # dm.setup("fit")
+    print(next(iter(dm.train_dataloader())))

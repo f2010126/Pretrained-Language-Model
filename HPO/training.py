@@ -15,6 +15,7 @@ except ImportError:
     from yaml import Loader
 
 
+
 # should only get hpo config, and data dir.
 def train_model(args, config=None):
     hyperparameters = config['hyperparameters']
@@ -38,8 +39,7 @@ def train_model(args, config=None):
         weight_decay=0.0,
         train_batch_size=hyperparameters['train_batch_size_gpu'],
         eval_batch_size=hyperparameters['eval_batch_size_gpu'],
-        optimizer_name=hyperparameters['optimizer_name'],
-        scheduler_name=hyperparameters['scheduler_name'],
+        hyperparameters=hyperparameters,
     )
 
     # set up logger
