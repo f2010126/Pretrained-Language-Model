@@ -1,0 +1,19 @@
+
+project_name: "HPO"
+group_name: "BERT"
+run_name: "Bert-Adapter-Training"
+task_name: 'sst2'
+output_dir: './adapter_training_output'
+
+hyperparameters:
+  model_name_or_path: 'bert-base-uncased'
+  max_seq_length: 256
+  do_lower_case: True
+  train_batch_size_gpu: 32
+  eval_batch_size_gpu: 32
+  learning_rate: 3e-3
+  optimizer_name: 'AdamW'
+  scheduler_name: 'linear'
+  num_train_epochs: 3
+  seed: 42
+

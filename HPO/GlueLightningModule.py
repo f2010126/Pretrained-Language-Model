@@ -1,27 +1,29 @@
 from pytorch_lightning import LightningModule
-from transformers import AutoConfig, AutoModelForSequenceClassification,get_linear_schedule_with_warmup
+from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
 from typing import Optional
 import torch
 import datetime
 import torchmetrics
 import evaluate
 from torch.optim import Adam, AdamW
+
+
 class GLUETransformer(LightningModule):
     def __init__(
-        self,
-        model_name_or_path: str,
-        num_labels: int,
-        task_name: str,
-        learning_rate: float = 2e-5,
-        adam_epsilon: float = 1e-8,
-        warmup_steps: int = 0,
-        weight_decay: float = 0.0,
-        train_batch_size: int = 32,
-        eval_batch_size: int = 32,
-        eval_splits: Optional[list] = None,
-        optimizer_name: str = "AdamW",
-        scheduler_name: str = "linear",
-        **kwargs,
+            self,
+            model_name_or_path: str,
+            num_labels: int,
+            task_name: str,
+            learning_rate: float = 2e-5,
+            adam_epsilon: float = 1e-8,
+            warmup_steps: int = 0,
+            weight_decay: float = 0.0,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            eval_splits: Optional[list] = None,
+            optimizer_name: str = "AdamW",
+            scheduler_name: str = "linear",
+            **kwargs,
     ):
         super().__init__()
         # access validation outputs, save them in-memory as instance attributes
@@ -37,19 +39,17 @@ class GLUETransformer(LightningModule):
         self.metric = evaluate.load(
             "glue", self.hparams.task_name, experiment_id=datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         )
-        self.accuracy= torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
+        self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
         self.optimizer_name = optimizer_name
         self.scheduler_name = scheduler_name
         self.train_metric = evaluate.load("glue", task_name)
 
         self.prepare_data_per_node = True
 
-
     def forward(self, **inputs):
         return self.model(**inputs)
 
-
-    def evaluate_step(self, batch, batch_idx,stage='val'):
+    def evaluate_step(self, batch, batch_idx, stage='val'):
         outputs = self(**batch)
         loss, logits = outputs[:2]
 
@@ -68,13 +68,13 @@ class GLUETransformer(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        return self.evaluate_step(batch, batch_idx,stage='train')
+        return self.evaluate_step(batch, batch_idx, stage='train')
 
-    def validation_step(self, batch, batch_idx, dataloader_idx=0,print_str="val"):
-        return self.evaluate_step(batch, batch_idx,stage='val')
+    def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
+        return self.evaluate_step(batch, batch_idx, stage='val')
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
-        return self.evaluate_step(batch, batch_idx,stage='test')
+        return self.evaluate_step(batch, batch_idx, stage='test')
 
     def configure_optimizers(self):
         """Prepare optimizer and schedule (linear warmup and decay)"""
@@ -91,8 +91,9 @@ class GLUETransformer(LightningModule):
             },
         ]
 
-        if self.optimizer_name== "AdamW":
-            optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        if self.optimizer_name == "AdamW":
+            optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate,
+                              eps=self.hparams.adam_epsilon)
         elif self.optimizer_name == "Adam":
             optimizer = Adam(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
 

@@ -7,37 +7,45 @@ import wandb
 import torchmetrics.functional as F
 import time
 import torch
+import yaml
+from yaml import load
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
 
 
 # should only get hpo config, and data dir.
 def train_model(args, config=None):
+    hyperparameters = config['hyperparameters']
+
     seed_everything(args.seed)
 
     # set up data loaders
-    dm = GlueModule(model_name_or_path=config['model'], task_name=args.task_name,
-                    max_seq_length=config['max_seq_length'], train_batch_size=config['train_batch_size_gpu'],
-                    eval_batch_size=config['eval_batch_size_gpu'], )
+    dm = GlueModule(model_name_or_path=hyperparameters['model_name_or_path'], task_name=config['task_name'],
+                    max_seq_length=hyperparameters['max_seq_length'], train_batch_size=hyperparameters['train_batch_size_gpu'],
+                    eval_batch_size=hyperparameters['eval_batch_size_gpu'], )
     dm.setup("fit")
     # set up model and experiment
     model = GLUETransformer(
-        model_name_or_path=config['model'],
+        model_name_or_path=hyperparameters['model_name_or_path'],
         num_labels=dm.num_labels,
         eval_splits=dm.eval_splits,
         task_name=dm.task_name,
-        learning_rate=config['learning_rate'],
+        learning_rate=hyperparameters['learning_rate'],
         adam_epsilon=1e-8,
         warmup_steps=0,
         weight_decay=0.0,
-        train_batch_size=config['train_batch_size_gpu'],
-        eval_batch_size=config['eval_batch_size_gpu'],
-        optimizer_name=config['optimizer_name'],
-        scheduler_name=config['scheduler_name'],
+        train_batch_size=hyperparameters['train_batch_size_gpu'],
+        eval_batch_size=hyperparameters['eval_batch_size_gpu'],
+        optimizer_name=hyperparameters['optimizer_name'],
+        scheduler_name=hyperparameters['scheduler_name'],
     )
 
     # set up logger
     wandb_logger = WandbLogger(entity="insane_gupta",
-                               project=args.project_name,  # group runs in "MNIST" project
-                               name=args.run_name,  # individual runs within project
+                               project=config['project_name'],  # group runs in "MNIST" project
+                               name=config['run_name'],  # individual runs within project
                                tags=["bert", "pytorch-lightning"],
                                group="bert",
                                log_model='all')  # log all new checkpoints during training
@@ -47,10 +55,11 @@ def train_model(args, config=None):
     accelerator = 'cpu' if n_devices == 0 else 'auto'
     trainer = Trainer(
         logger=wandb_logger,
-        max_epochs=config['num_train_epochs'],
+        max_epochs=hyperparameters['num_train_epochs'],
         accelerator=accelerator,
         devices='auto',  # Use whatver device is available
-        strategy="ddp",
+        strategy='auto',
+        max_steps=20,
     )
     # train model
     print("Training model")
@@ -127,9 +136,11 @@ def parse_args():
                         default=42,
                         type=int,
                         help="Seed used for training and evaluation.")
-    parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="Adapters")
+    parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="HPO")
     parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="BERT")
     parser.add_argument("--run_name", type=str, help="Name of WANDDB run.", default="Bert-Adapter-Training")
+
+    parser.add_argument("--yaml_config", type=str, help="Path to yaml config file.", default="ray_cluster_test/BoHBCode/yaml_config/default.yaml")
 
     return parser.parse_args()
 
@@ -137,7 +148,13 @@ def parse_args():
 if __name__ == "__main__":
     start = time.time()
     args = parse_args()
-    config = vars(args)
+    try:
+        with open(args.yaml_config, 'r') as stream:
+            config = load(stream, Loader=Loader)
+    except IOError:
+        print("Could not read YAML file. Using default configs.")
+        config = vars(args)
+
     train_model(args=args,config=config)
 
     end = time.time()

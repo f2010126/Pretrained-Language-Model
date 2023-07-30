@@ -4,6 +4,8 @@ import datasets
 from transformers import AutoTokenizer
 import torch
 import os
+import pandas as pd
+
 
 class GLUEDataModule(LightningDataModule):
     task_text_field_map = {
@@ -115,7 +117,6 @@ class GLUEDataModule(LightningDataModule):
 
 
 class GlueModule(LightningDataModule):
-
     task_text_field_map = {
         "cola": ["sentence"],
         "sst2": ["sentence"],
@@ -168,8 +169,8 @@ class GlueModule(LightningDataModule):
         self.train_batch_size = train_batch_size
         self.eval_batch_size = eval_batch_size
 
-        #self.text_fields = self.task_text_field_map[task_name]
-        #self.num_labels = self.glue_task_num_labels[task_name]
+        # self.text_fields = self.task_text_field_map[task_name]
+        self.num_labels = self.glue_task_num_labels[task_name]
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
         self.prepare_data_per_node = True
         self.n_cpu = 2
@@ -179,7 +180,6 @@ class GlueModule(LightningDataModule):
         # download, split tokenise data and save to disk
         print(f'Download and Tokenise')
         dataset = datasets.load_dataset("glue", self.task_name)
-
 
         # split the train set into train and test
         spare_data = dataset['train'].train_test_split(test_size=0.025)
@@ -199,15 +199,13 @@ class GlueModule(LightningDataModule):
         torch.save(dataset, 'tokenized_data.pt')
         print(f'Dataset Tokenised')
 
-
-
     def setup(self, stage: str):
         # load data here
         self.dataset = torch.load('tokenized_data.pt')
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
         print('dataset loaded')
 
-    def encode_batch(self,batch):
+    def encode_batch(self, batch):
         """Encodes a batch of input data using the model tokenizer."""
         return self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True, padding="max_length")
 
@@ -218,15 +216,24 @@ class GlueModule(LightningDataModule):
         if len(self.eval_splits) == 1:
             return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size,  num_workers=self.n_cpu)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size,  num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
+
 
 class AmazonMultiReview(LightningDataModule):
+    task_metadata = {
+        "num_labels": 5,
+        "label_col": "label",
+        "tokenize_folder_name": "amazon_multi_review",
+    }
+
     loader_columns = [
         "datasets_idx",
         "input_ids",
@@ -236,6 +243,7 @@ class AmazonMultiReview(LightningDataModule):
         "end_positions",
         "labels",
     ]
+
     def __init__(
             self,
             model_name_or_path: str,
@@ -256,7 +264,7 @@ class AmazonMultiReview(LightningDataModule):
         self.eval_batch_size = eval_batch_size
 
         # self.text_fields = self.task_text_field_map[task_name]
-        # self.num_labels = self.glue_task_num_labels[task_name]
+        self.num_labels = self.task_metadata['num_labels']
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
         self.prepare_data_per_node = True
         self.n_cpu = 2
@@ -268,7 +276,9 @@ class AmazonMultiReview(LightningDataModule):
             self.prepare_data()
 
     def clean_data(self, example):
-        example['sentence'] = ["{} {}".format(title, review) for title, review in zip(example['review_title'], example['review_body'])]
+        cols = self.encode_columns
+        example['sentence'] = ["{} {}".format(title, review) for title, review in
+                               zip(example['review_title'], example['review_body'])]
         example['stars'] = [int(star) - 1 for star in example['stars']]
         return example
 
@@ -276,14 +286,13 @@ class AmazonMultiReview(LightningDataModule):
         # called only on 1 GPU per node. Do not do any self.x assignments here
         # download, split tokenise data and save to disk
         print(f'Download and Tokenise')
-        dataset = datasets.load_dataset(self.task_name,'de')
-
+        dataset = datasets.load_dataset(self.task_name, 'de')
 
         for split in dataset.keys():
-            dataset[split]=dataset[split].map(self.clean_data, batched=True,)
+            dataset[split] = dataset[split].map(self.clean_data, batched=True, )
             dataset[split] = dataset[split].map(self.encode_batch, batched=True)
             remove_features = set(dataset[split].features) ^ set([self.label_column] + ["input_ids", "attention_mask"])
-            dataset[split]=dataset[split].remove_columns(remove_features)
+            dataset[split] = dataset[split].remove_columns(remove_features)
             dataset[split] = dataset[split].rename_column(self.label_column, "labels")
 
             # Transform to pytorch tensors and only output the required columns
@@ -293,16 +302,16 @@ class AmazonMultiReview(LightningDataModule):
             dataset[split].set_format(type="torch", columns=columns)
 
         # save the tokenized data to disk
-        torch.save(dataset, f'{self.task_name}_tokenized_data.pt')
+        torch.save(dataset, f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
         print(f'Dataset Tokenised')
 
     def setup(self, stage: str):
         # load data here
-        self.dataset = torch.load(f'{self.task_name}_tokenized_data.pt')
+        self.dataset = torch.load(f'{self.task_metadata["tokenize_folder_name"]}/tokenized_data.pt')
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
         print('dataset loaded')
 
-    def encode_batch(self,batch):
+    def encode_batch(self, batch):
         """Encodes a batch of input data using the model tokenizer."""
         return self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True, padding="max_length")
 
@@ -313,13 +322,16 @@ class AmazonMultiReview(LightningDataModule):
         if len(self.eval_splits) == 1:
             return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size,  num_workers=self.n_cpu)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size,  num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
+
 
 class TyqiangzData(LightningDataModule):
     loader_columns = [
@@ -331,6 +343,7 @@ class TyqiangzData(LightningDataModule):
         "end_positions",
         "labels",
     ]
+
     def __init__(
             self,
             model_name_or_path: str,
@@ -364,7 +377,8 @@ class TyqiangzData(LightningDataModule):
             self.prepare_data()
 
     def clean_data(self, example):
-        example['sentence'] = ["{} {}".format(title, review) for title, review in zip(example['review_title'], example['review_body'])]
+        example['sentence'] = ["{} {}".format(title, review) for title, review in
+                               zip(example['review_title'], example['review_body'])]
         example['stars'] = [int(star) - 1 for star in example['stars']]
         return example
 
@@ -372,13 +386,12 @@ class TyqiangzData(LightningDataModule):
         # called only on 1 GPU per node. Do not do any self.x assignments here
         # download, split tokenise data and save to disk
         print(f'Download and Tokenise')
-        dataset = datasets.load_dataset(self.task_name,'german')
-
+        dataset = datasets.load_dataset(self.task_name, 'german')
 
         for split in dataset.keys():
             dataset[split] = dataset[split].map(self.encode_batch, batched=True)
             remove_features = set(dataset[split].features) ^ set([self.label_column] + ["input_ids", "attention_mask"])
-            dataset[split]=dataset[split].remove_columns(remove_features)
+            dataset[split] = dataset[split].remove_columns(remove_features)
             dataset[split] = dataset[split].rename_column(self.label_column, "labels")
 
             # Transform to pytorch tensors and only output the required columns
@@ -388,7 +401,7 @@ class TyqiangzData(LightningDataModule):
             dataset[split].set_format(type="torch", columns=columns)
 
         # save the tokenized data to disk
-        torch.save(dataset, f'{self.task_name}_tokenized_data.pt')
+        torch.save(dataset, f'./{self.task_name}_tokenized_data.pt')
         print(f'Dataset Tokenised')
 
     def setup(self, stage: str):
@@ -397,7 +410,7 @@ class TyqiangzData(LightningDataModule):
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
         print('dataset loaded')
 
-    def encode_batch(self,batch):
+    def encode_batch(self, batch):
         """Encodes a batch of input data using the model tokenizer."""
         return self.tokenizer(batch["text"], max_length=self.max_seq_length, truncation=True, padding="max_length")
 
@@ -408,33 +421,34 @@ class TyqiangzData(LightningDataModule):
         if len(self.eval_splits) == 1:
             return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size,  num_workers=self.n_cpu)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size,  num_workers=self.n_cpu) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+                    self.eval_splits]
+
 
 if __name__ == "__main__":
     dm = GlueModule("distilbert-base-uncased", task_name="sst2", max_seq_length=256, train_batch_size=32,
-                        eval_batch_size=32)
+                    eval_batch_size=32)
     dm = AmazonMultiReview("distilbert-base-uncased",
                            task_name="amazon_reviews_multi",
                            max_seq_length=256,
                            train_batch_size=32,
                            label_column='stars',
                            encode_columns=['review_body', 'review_title'])
+    dm.setup("fit")
 
     dm = TyqiangzData("distilbert-base-uncased",
-                           task_name="tyqiangz/multilingual-sentiments",
-                           max_seq_length=256,
-                           train_batch_size=32,
-                           label_column='label',
-                           encode_columns=['text'])
+                      task_name="tyqiangz/multilingual-sentiments",
+                      max_seq_length=256,
+                      train_batch_size=32,
+                      label_column='label',
+                      encode_columns=['text'])
     # dm.prepare_data()
     dm.setup("fit")
     next(iter(dm.train_dataloader()))
-
-
-

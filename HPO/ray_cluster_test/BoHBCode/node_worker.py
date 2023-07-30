@@ -89,10 +89,12 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = MyWorker(sleep_interval=0.5, run_id=args.run_id, host=host)
+        print(f"Load worker credentials from {args.shared_directory}")
         w.load_nameserver_credentials(working_directory=args.shared_directory)
         w.run(background=False)
         exit(0)
 
+    print(f'Starting master with id: {args.run_id}')
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
     NS = hpns.NameServer(run_id=args.run_id, host=host, port=0, working_directory=args.shared_directory)
@@ -104,6 +106,7 @@ if __name__ == "__main__":
     w = MyWorker(sleep_interval=0.5, run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port)
     w.run(background=True)
 
+    print(f'Worker starts bohb')
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
     bohb = BOHB(configspace=MyWorker.get_configspace(),
