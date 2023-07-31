@@ -44,7 +44,9 @@ class GLUETransformer(LightningModule):
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
         self.optimizer_name = hyperparameters['optimizer_name']
         self.scheduler_name = hyperparameters['scheduler_name']
-        self.train_metric = evaluate.load("glue", task_name)
+        self.train_acc = evaluate.load( 'accuracy')
+        self.train_f1 = evaluate.load( 'f1')
+        self.train_bal_acc=evaluate.load( 'hyperml/balanced_accuracy')
 
         self.prepare_data_per_node = True
 
@@ -65,8 +67,9 @@ class GLUETransformer(LightningModule):
         labels = batch["labels"]
 
         acc = self.accuracy(preds, labels)
-        self.log(f'{stage}_acc_step', acc, prog_bar=True, sync_dist=True, on_step=True)
-        self.log(f'{stage}_loss_step', loss, prog_bar=True, sync_dist=True, on_step=True)
+        print(f'-----> {stage}_acc_step', acc)
+        self.log(f'{stage}_acc', acc, prog_bar=True, sync_dist=True, on_step=True)
+        self.log(f'{stage}_loss', loss, prog_bar=True, sync_dist=True, on_step=True)
         return loss
 
     def training_step(self, batch, batch_idx):

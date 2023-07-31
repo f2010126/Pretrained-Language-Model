@@ -1,5 +1,5 @@
 from pytorch_lightning import seed_everything, Trainer
-from datamodule_glue import GLUEDataModule, GlueModule
+from datamodule_glue import GLUEDataModule, GlueModule, getDataModule
 from GlueLightningModule import GLUETransformer
 from pytorch_lightning.loggers import WandbLogger
 import argparse
@@ -23,10 +23,10 @@ def train_model(args, config=None):
     seed_everything(args.seed)
 
     # set up data loaders
-    dm = GlueModule(model_name_or_path=hyperparameters['model_name_or_path'], task_name=config['task_name'],
-                    max_seq_length=hyperparameters['max_seq_length'], train_batch_size=hyperparameters['train_batch_size_gpu'],
-                    eval_batch_size=hyperparameters['eval_batch_size_gpu'], )
-    dm.setup("fit")
+    dm = getDataModule(task_name= config['task_name'], model_name_or_path= hyperparameters['model_name_or_path'],
+                       max_seq_length=hyperparameters['max_seq_length'],
+                       train_batch_size=hyperparameters['train_batch_size_gpu'],
+                       eval_batch_size=hyperparameters['eval_batch_size_gpu'])
     # set up model and experiment
     model = GLUETransformer(
         model_name_or_path=hyperparameters['model_name_or_path'],
@@ -57,9 +57,9 @@ def train_model(args, config=None):
         logger=wandb_logger,
         max_epochs=hyperparameters['num_train_epochs'],
         accelerator=accelerator,
-        devices='auto',  # Use whatver device is available
-        strategy='auto',
-        max_steps=20,
+        devices='auto', strategy='auto', # Use whatver device is available
+        max_steps=10, limit_val_batches=5,limit_test_batches=5, num_sanity_val_steps=0, # max_steps=20 and no sanity check
+        val_check_interval=5, check_val_every_n_epoch=1, # check_val_every_n_epoch=1 and every 5 batches
     )
     # train model
     print("Training model")
