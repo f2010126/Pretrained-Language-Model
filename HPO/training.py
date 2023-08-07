@@ -27,6 +27,7 @@ def train_model(args, config=None):
                        max_seq_length=hyperparameters['max_seq_length'],
                        train_batch_size=hyperparameters['train_batch_size_gpu'],
                        eval_batch_size=hyperparameters['eval_batch_size_gpu'])
+    dm.setup("fit")
     # set up model and experiment
     model = GLUETransformer(
         model_name_or_path=hyperparameters['model_name_or_path'],
@@ -43,11 +44,12 @@ def train_model(args, config=None):
     )
 
     # set up logger
+    wandb.init()
     wandb_logger = WandbLogger(entity="insane_gupta",
                                project=config['project_name'],  # group runs in "MNIST" project
                                name=config['run_name'],  # individual runs within project
                                tags=["bert", "pytorch-lightning"],
-                               group="bert",
+                               group=config['group_name'],
                                log_model='all')  # log all new checkpoints during training
 
     # set up trainer
@@ -137,8 +139,8 @@ def parse_args():
                         type=int,
                         help="Seed used for training and evaluation.")
     parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="HPO")
-    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="BERT")
-    parser.add_argument("--run_name", type=str, help="Name of WANDDB run.", default="Bert-Adapter-Training")
+    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="Amazon") # Dataset name
+    parser.add_argument("--run_name", type=str, help="Name of WANDDB run.", default="Bert-Adapter-Training") # shoudld be model name
 
     parser.add_argument("--yaml_config", type=str, help="Path to yaml config file.", default="ray_cluster_test/BoHBCode/yaml_config/default.yaml")
 

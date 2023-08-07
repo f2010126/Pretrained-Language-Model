@@ -129,14 +129,14 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     if args.server_address:
-        ray.init(f"ray://{args.server_address}")
+        context = ray.init(f"ray://{args.server_address}")
     elif args.ray_address:
-        ray.init(address=args.ray_address)
+        context = ray.init(address=args.ray_address)
     elif args.smoke_test:
-        ray.init(num_cpus=2)
+        context = ray.init(num_cpus=2)
     else:
-        ray.init(address='auto', _redis_password=os.environ['redis_password'])
-    print("Dashboard URL: http://{}".format(ray.get_webui_url()))
+        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+    print("Dashboard URL: http://{}".format(context.dashboard_url))
     # for early stopping
     sched = AsyncHyperBandScheduler()
     print("Starting hyperparameter tuning.")
