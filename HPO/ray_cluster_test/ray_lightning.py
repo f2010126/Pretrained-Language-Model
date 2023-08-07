@@ -182,7 +182,10 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
             resources=resources_per_trial
         )
     tuner = tune.Tuner(
-        train_fn=trainable_obj,
+        tune.with_resources(
+            train_fn_with_parameters,
+            resources=resources_per_trial
+        ),
         tune_config=tune.TuneConfig(
             metric="loss",
             mode="min",
