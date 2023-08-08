@@ -12,6 +12,9 @@ from torchmetrics import Accuracy
 from torchvision import datasets, transforms
 from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
 from ray.tune.search.bohb import TuneBOHB
+import wandb
+from pytorch_lightning.loggers import WandbLogger
+
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -102,6 +105,8 @@ class LightningMNISTClassifier(pl.LightningModule):
         accuracy = self.accuracy(logits, y)
         result = {"val_loss": loss, "val_accuracy": accuracy}
         self.val_output_list.append(result)
+        self.log("ptl/val_loss", loss)
+        self.log("ptl/val_accuracy", accuracy)
         return {"val_loss": loss, "val_accuracy": accuracy}
 
     # def validation_epoch_end(self, outputs):
@@ -121,21 +126,30 @@ class LightningMNISTClassifier(pl.LightningModule):
 
 
 def train_mnist(config, data_dir=None, num_epochs=10, num_gpus=0):
+    wandb_logger = WandbLogger(project="datasetname",
+                         log_model=True,
+                         name=f"{config['batch_size']}_modelname",
+                         entity="insane_gupta",group='modelname',)
     model = LightningMNISTClassifier(config, data_dir)
     dm = DataModuleMNIST()
     # Create the Tune Reporting Callback
     metrics = {"loss": "ptl/val_loss", "acc": "ptl/val_accuracy"}
     callbacks = [TuneReportCallback(metrics, on="validation_end")]
+
+    n_devices = torch.cuda.device_count()
+    accelerator = 'cpu' if n_devices == 0 else 'auto'
+
     trainer = pl.Trainer(
+        logger=wandb_logger,
         max_epochs=num_epochs,
-        devices="auto",
+        accelerator=accelerator,
+        devices='auto', strategy='auto',  # Use whatver device is available
         enable_progress_bar=True,
         callbacks=[TuneReportCallback(metrics, on="validation_end")])
     trainer.fit(model, dm)
 
 # BOHB LOOP
 def mnist_bohb():
-    num_samples = 10
     num_epochs = 10
     gpus_per_trial = 0  # set this to higher if using GPU
     data_dir = os.path.join(tempfile.gettempdir(), "mnist_data_")
@@ -155,7 +169,7 @@ def mnist_bohb():
 
     # set all the resources to be used by BOHB here.
 
-    max_iterations = 10
+    max_iterations = 3 #bohb will stop after this many iterations
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
         max_t=max_iterations,
@@ -177,52 +191,12 @@ def mnist_bohb():
             mode="max",
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
-            num_samples=5,
+            num_samples=5, # No of trials to be run
         ),
         param_space=config,
     )
     results = tuner.fit()
     print("Best hyperparameters found were: ", results.get_best_result().config)
-
-
-
-
-
-# Normal Loop
-def tune_mnist():
-    num_samples = 10
-    num_epochs = 10
-    gpus_per_trial = 0  # set this to higher if using GPU
-
-    data_dir = os.path.join(tempfile.gettempdir(), "mnist_data_")
-    # Download data
-
-    config = {
-        "layer_1": tune.choice([32, 64, 128]),
-        "layer_2": tune.choice([64, 128, 256]),
-        "lr": tune.loguniform(1e-4, 1e-1),
-        "batch_size": tune.choice([32, 64, 128]),
-    }
-
-    trainable = tune.with_parameters(
-        train_mnist,
-        data_dir=data_dir,
-        num_epochs=num_epochs,
-        num_gpus=gpus_per_trial)
-
-    analysis = tune.run(
-        trainable,
-        resources_per_trial={
-            "cpu": 8,
-            "gpu": gpus_per_trial
-        },
-        metric="loss",
-        mode="min",
-        config=config,
-        num_samples=num_samples,
-        name="tune_mnist")
-
-    print(analysis.best_config)
 
 if __name__ == "__main__":
     mnist_bohb()
