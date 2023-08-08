@@ -1,6 +1,6 @@
 import os
 import tempfile
-
+from ray import air, tune
 import pytorch_lightning as pl
 import torch
 from ray import tune
@@ -10,7 +10,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data import random_split, DataLoader
 from torchmetrics import Accuracy
 from torchvision import datasets, transforms
-
+from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
+from ray.tune.search.bohb import TuneBOHB
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -122,7 +123,9 @@ class LightningMNISTClassifier(pl.LightningModule):
 def train_mnist(config, data_dir=None, num_epochs=10, num_gpus=0):
     model = LightningMNISTClassifier(config, data_dir)
     dm = DataModuleMNIST()
+    # Create the Tune Reporting Callback
     metrics = {"loss": "ptl/val_loss", "acc": "ptl/val_accuracy"}
+    callbacks = [TuneReportCallback(metrics, on="validation_end")]
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         devices="auto",
@@ -130,7 +133,62 @@ def train_mnist(config, data_dir=None, num_epochs=10, num_gpus=0):
         callbacks=[TuneReportCallback(metrics, on="validation_end")])
     trainer.fit(model, dm)
 
+# BOHB LOOP
+def mnist_bohb():
+    num_samples = 10
+    num_epochs = 10
+    gpus_per_trial = 0  # set this to higher if using GPU
+    data_dir = os.path.join(tempfile.gettempdir(), "mnist_data_")
+    # Download data
 
+    config = {
+        "layer_1": tune.choice([32, 64, 128]),
+        "layer_2": tune.choice([64, 128, 256]),
+        "lr": tune.loguniform(1e-4, 1e-1),
+        "batch_size": tune.choice([32, 64, 128]),
+    }
+    trainable = tune.with_parameters(
+        train_mnist,
+        data_dir=data_dir,
+        num_epochs=num_epochs,
+        num_gpus=gpus_per_trial)
+
+    # set all the resources to be used by BOHB here.
+
+    max_iterations = 10
+    bohb_hyperband = HyperBandForBOHB(
+        time_attr="training_iteration",
+        max_t=max_iterations,
+        reduction_factor=2,
+        stop_last_trials=False,
+    )
+
+    bohb_search = TuneBOHB(
+        # space=config_space,  # If you want to set the space manually
+    )
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
+    tuner = tune.Tuner(
+        trainable,
+        run_config=air.RunConfig(
+            name="bohb_test", stop={"training_iteration": max_iterations,"acc": 0.99}
+        ),
+        tune_config=tune.TuneConfig(
+            metric="acc",
+            mode="max",
+            scheduler=bohb_hyperband,
+            search_alg=bohb_search,
+            num_samples=5,
+        ),
+        param_space=config,
+    )
+    results = tuner.fit()
+    print("Best hyperparameters found were: ", results.get_best_result().config)
+
+
+
+
+
+# Normal Loop
 def tune_mnist():
     num_samples = 10
     num_epochs = 10
@@ -155,7 +213,7 @@ def tune_mnist():
     analysis = tune.run(
         trainable,
         resources_per_trial={
-            "cpu": 1,
+            "cpu": 8,
             "gpu": gpus_per_trial
         },
         metric="loss",
@@ -167,4 +225,4 @@ def tune_mnist():
     print(analysis.best_config)
 
 if __name__ == "__main__":
-    tune_mnist()
+    mnist_bohb()
