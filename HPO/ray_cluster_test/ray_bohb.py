@@ -40,7 +40,7 @@ class MyTrainableClass(Trainable):
     maximum reward value reached.
     """
 
-    def setup(self, config):
+    def setup(self, config,num_epochs=1,num_gpus=0):
         self.timestep = 0
 
     def step(self):
@@ -67,7 +67,7 @@ def example_run():
     ray.init(num_cpus=8)
 
     config = {
-        "iterations": 100,
+        "iterations": 1, # max no of evaluations ?
         "width": tune.uniform(0, 20),
         "height": tune.uniform(-100, 100),
         "activation": tune.choice(["relu", "tanh"]),
@@ -84,7 +84,7 @@ def example_run():
     #     CS.CategoricalHyperparameter(
     #         "activation", choices=["relu", "tanh"]))
 
-    max_iterations = 9
+    max_iterations = 5 # max no to train for?
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
         max_t=max_iterations,
@@ -97,8 +97,19 @@ def example_run():
     )
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=2)
 
+    num_epochs =10
+    gpus_per_trial =0
+    train_fn_with_parameters = tune.with_parameters(MyTrainableClass,
+                                                    num_epochs=num_epochs,
+                                                    num_gpus=gpus_per_trial,)
+    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial}
+    trainable_obj = tune.with_resources(
+        train_fn_with_parameters,
+        resources=resources_per_trial
+    )
+
     tuner = tune.Tuner(
-        MyTrainableClass,
+        trainable_obj,
         run_config=air.RunConfig(
             name="bohb_test", stop={"training_iteration": max_iterations}
         ),
@@ -107,7 +118,7 @@ def example_run():
             mode="max",
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
-            num_samples=32,
+            num_samples=4,
         ),
         param_space=config,
     )
@@ -305,9 +316,9 @@ def example_bohb():
     gpus_available = os.environ.get('SLURM_GPUS_ON_NODE') if torch.cuda.is_available() else 0
     cpus_available = os.environ.get('SLURM_CPUS_ON_NODE') or 0
 
-    tune_mnist_bohb(num_samples=5, num_epochs=10, gpus_per_trial=0)
+    tune_mnist_bohb(num_samples=100, num_epochs=10, gpus_per_trial=0)
 
 
 if __name__ == "__main__":
     example_run()
-    example_bohb()
+    # example_bohb()
