@@ -14,7 +14,12 @@ from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
 from ray.tune.search.bohb import TuneBOHB
 import wandb
 from pytorch_lightning.loggers import WandbLogger
+import ray
+import argparse
 
+# local changes
+import uuid
+import socket
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -24,6 +29,7 @@ class DataModuleMNIST(pl.LightningDataModule):
         self.transform = transforms.Compose([
             transforms.ToTensor()
         ])
+        self.dataworkers = os.cpu_count()/2
 
     def prepare_data(self):
         datasets.MNIST(self.download_dir,
@@ -42,13 +48,13 @@ class DataModuleMNIST(pl.LightningDataModule):
                                         train=False, transform=self.transform)
 
     def train_dataloader(self):
-        return DataLoader(self.train_data, batch_size=self.batch_size)
+        return DataLoader(self.train_data, batch_size=self.batch_size, num_workers=2)
 
     def val_dataloader(self):
-        return DataLoader(self.valid_data, batch_size=self.batch_size)
+        return DataLoader(self.valid_data, batch_size=self.batch_size, num_workers=2)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, batch_size=self.batch_size)
+        return DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
 
 
 class LightningMNISTClassifier(pl.LightningModule):
@@ -124,8 +130,16 @@ class LightningMNISTClassifier(pl.LightningModule):
         self.log("ptl/val_loss", avg_loss)
         self.log("ptl/val_accuracy", avg_acc)
 
+    def on_fit_end(self):
+        print("fit end")
 
-def train_mnist(config, data_dir=None, num_epochs=10, num_gpus=0):
+
+def train_mnist(config, data_dir=None, num_epochs=2):
+    print("Running in IP ---> ", socket.gethostbyname(socket.gethostname()))
+    if torch.cuda.is_available():
+        print(f"GPU is available { torch.cuda.device_count()}")
+    else:
+        print("GPU is not available")
     wandb_logger = WandbLogger(project="datasetname",
                          log_model=True,
                          name=f"{config['batch_size']}_modelname",
@@ -147,11 +161,40 @@ def train_mnist(config, data_dir=None, num_epochs=10, num_gpus=0):
         enable_progress_bar=True,
         callbacks=[TuneReportCallback(metrics, on="validation_end")])
     trainer.fit(model, dm)
+    wandb.finish()
 
 # BOHB LOOP
-def mnist_bohb():
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Bohb on MultiNode")
+    parser.add_argument(
+        "--cuda",
+        action="store_true",
+        default=False,
+        help="Enables GPU training")
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="Finish quickly for testing")
+    parser.add_argument(
+        "--ray-address",
+        help="Address of Ray cluster for seamless distributed execution.")
+    parser.add_argument(
+        "--server-address",
+        type=str,
+        default=None,
+        required=False,
+        help="The address of server to connect to if using "
+             "Ray Client.")
+    args, _ = parser.parse_known_args()
+    return args
+
+def mnist_bohb(smoke_test=False):
+    if torch.cuda.is_available():
+        print(f"GPU is available { torch.cuda.device_count()}")
+    else:
+        print("GPU is not available")
+    ## BOHB CONFIGURATION
     num_epochs = 10
-    gpus_per_trial = 0  # set this to higher if using GPU
+    gpus_per_trial = 2  # set this to higher if using GPU
     data_dir = os.path.join(tempfile.gettempdir(), "mnist_data_")
     # Download data
 
@@ -161,15 +204,19 @@ def mnist_bohb():
         "lr": tune.loguniform(1e-4, 1e-1),
         "batch_size": tune.choice([32, 64, 128]),
     }
+    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial}
+
     trainable = tune.with_parameters(
         train_mnist,
-        data_dir=data_dir,
-        num_epochs=num_epochs,
-        num_gpus=gpus_per_trial)
+        data_dir=data_dir, # params for the train_mnist function
+        num_epochs=num_epochs,) # change this?
 
     # set all the resources to be used by BOHB here.
+    resources_per_trial = {"cpu": 1, "gpu": gpus_per_trial}
 
-    max_iterations = 3 #bohb will stop after this many iterations
+    resource_trainable = tune.with_resources(trainable, resources=resources_per_trial)
+
+    max_iterations = 3 #bohb will stop after this many evaluations in the given bracket/round
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
         max_t=max_iterations,
@@ -182,16 +229,16 @@ def mnist_bohb():
     )
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
     tuner = tune.Tuner(
-        trainable,
+        resource_trainable,
         run_config=air.RunConfig(
-            name="bohb_test", stop={"training_iteration": max_iterations,"acc": 0.99}
+            name="bohb_test", stop={"training_iteration": 2 if smoke_test else max_iterations,"acc": 0.99}
         ),
         tune_config=tune.TuneConfig(
             metric="acc",
             mode="max",
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
-            num_samples=5, # No of trials to be run
+            num_samples=2, # No of trials to be run/ No of brackets.
         ),
         param_space=config,
     )
@@ -199,4 +246,18 @@ def mnist_bohb():
     print("Best hyperparameters found were: ", results.get_best_result().config)
 
 if __name__ == "__main__":
-    mnist_bohb()
+    args = parse_args()
+
+    # os.environ['RAY_ADDRESS'] = '127.0.0.1:6379'
+
+    if args.server_address:
+        context = ray.init(f"ray://{args.server_address}")
+    elif args.ray_address:
+        context = ray.init(address=args.ray_address)
+    elif args.smoke_test:
+        context = ray.init(num_cpus=2)
+    else:
+        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+    print("Dashboard URL: http://{}".format(context.dashboard_url))
+    mnist_bohb(smoke_test=args.smoke_test)
+

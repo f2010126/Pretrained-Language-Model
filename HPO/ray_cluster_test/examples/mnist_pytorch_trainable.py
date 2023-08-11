@@ -118,6 +118,8 @@ if __name__ == "__main__":
         "--smoke-test", action="store_true", help="Finish quickly for testing")
     parser.add_argument(
         "--ray-address",
+        type=str,
+        default='localhost:6379',
         help="Address of Ray cluster for seamless distributed execution.")
     parser.add_argument(
         "--server-address",

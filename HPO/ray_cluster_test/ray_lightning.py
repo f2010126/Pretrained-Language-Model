@@ -133,6 +133,10 @@ def train_mnist(config):
     trainer.fit(model)
 
 def train_mnist_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
+    if torch.cuda.is_available():
+        print(f"No. of GPU available--->{torch.cuda.device_count()}")
+    else:
+        print("No GPU available")
     data_dir = os.path.expanduser(data_dir)
     model = LightningMNISTClassifier(config, data_dir)
     trainer = pl.Trainer(
@@ -183,7 +187,7 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
         )
     tuner = tune.Tuner(
         tune.with_resources(
-            trainable=trainable_obj,
+            trainable=train_fn_with_parameters,
             resources=resources_per_trial
         ),
         tune_config=tune.TuneConfig(
@@ -207,4 +211,4 @@ if __name__ == "__main__":
     cpus_available = os.environ.get('SLURM_CPUS_ON_NODE') or 0
 
     # var_heer=ray.init(num_cpus=cpus_available, num_gpus=gpus_available) # so this uese only 1 cpu and n gpu
-    tune_mnist_asha(num_samples=5, num_epochs=10,gpus_per_trial=0)
+    tune_mnist_asha(num_samples=3, num_epochs=2,gpus_per_trial=gpus_available)

@@ -16,5 +16,6 @@
 #SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/ray_clusterduck.out
 #SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/ray_clusterduck.error
 
+# when running on server, do ray start --head
 
 python slurm-launch.py --exp-name test-ray --command "python examples/mnist_pytorch_trainable.py" --num-nodes 2 --num-gpus 4 --partition mlhiwidlc_gpu-rtx2080-advanced
