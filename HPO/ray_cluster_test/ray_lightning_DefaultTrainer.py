@@ -1,7 +1,9 @@
 
 import argparse
 import torch
-from filelock import FileLock
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
+import wandb
 from torch.nn import functional as F
 from torchmetrics import Accuracy
 import pytorch_lightning as pl
@@ -10,17 +12,22 @@ from torch.utils.data import random_split, DataLoader
 from ray.tune.integration.pytorch_lightning import TuneReportCallback
 from torchvision import datasets, transforms
 from ray import air, tune
+from ray.air.config import RunConfig, ScalingConfig, CheckpointConfig
+from ray.tune.schedulers import ASHAScheduler, PopulationBasedTraining
 import ray
+from ray.tune import CLIReporter
+from ray.train.lightning import LightningConfigBuilder, LightningTrainer
+
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
         super().__init__()
-        self.download_dir = ''
+        self.download_dir = './data'
         self.batch_size = 32
         self.transform = transforms.Compose([
             transforms.ToTensor()
         ])
-        self.dataworkers = os.cpu_count() / 2
+        self.dataworkers = int(os.cpu_count() / 2)
         self.prepare_data_per_node = True
 
     def prepare_data(self):
@@ -32,7 +39,7 @@ class DataModuleMNIST(pl.LightningDataModule):
 
     def setup(self, stage=None):
         data = datasets.MNIST(self.download_dir,
-                              train=True, transform=self.transform)
+                              train=True, transform=self.transform, download=True)
 
         self.train_data, self.valid_data = random_split(data, [55000, 5000])
 
@@ -40,20 +47,22 @@ class DataModuleMNIST(pl.LightningDataModule):
                                         train=False, transform=self.transform)
 
     def train_dataloader(self):
-        return DataLoader(self.train_data, batch_size=self.batch_size, num_workers=2)
+        return DataLoader(self.train_data, batch_size=self.batch_size, num_workers=self.dataworkers)
 
     def val_dataloader(self):
-        return DataLoader(self.valid_data, batch_size=self.batch_size, num_workers=2)
+        return DataLoader(self.valid_data, batch_size=self.batch_size, num_workers=self.dataworkers)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
+        return DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.dataworkers)
+
+    def teardown(self, stage: str):
+        wandb.finish()
 
 
 class LightningMNISTClassifier(pl.LightningModule):
-    def __init__(self, config, data_dir=None):
+    def __init__(self, config):
         super(LightningMNISTClassifier, self).__init__()
 
-        self.data_dir = data_dir or os.getcwd()
         self.lr = config["lr"]
         layer_1, layer_2 = config["layer_1"], config["layer_2"]
         self.batch_size = config["batch_size"]
@@ -64,6 +73,10 @@ class LightningMNISTClassifier(pl.LightningModule):
         self.layer_3 = torch.nn.Linear(layer_2, 10)
         self.accuracy = Accuracy(task="multiclass", num_classes=10)
         self.val_output_list = []
+
+        wandb_obj = wandb.init(project="datasetname",
+                               name=f"{config['batch_size']}_modelname",
+                               entity="insane_gupta", group='modelname', )
 
     def forward(self, x):
         batch_size, channels, width, height = x.size()
@@ -86,8 +99,8 @@ class LightningMNISTClassifier(pl.LightningModule):
         logits = self.forward(x)
         loss = F.nll_loss(logits, y)
         acc = self.accuracy(logits, y)
-        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
-        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
@@ -103,12 +116,16 @@ class LightningMNISTClassifier(pl.LightningModule):
         outputs = self.val_output_list
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
-        self.log("ptl/val_accuracy", avg_acc,on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True) # self.log stuff is used by the trainer.
+
+        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         return {"loss": avg_loss, "acc": avg_acc}
 
     def on_fit_end(self):
         print("---------- Finished training")
+
+    def teardown(self, stage: str):
+        wandb.finish()
 
 
 def train_mnist_tune(config, num_epochs=10, num_gpus=0):
@@ -146,30 +163,92 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
         "lr": tune.loguniform(1e-4, 1e-1),
         "batch_size": tune.choice([32, 64, 128]),
     }
+    metric = "ptl/val_accuracy",
+    mode = "max",
 
-    trainable = tune.with_parameters(
-        train_mnist_tune, num_epochs=num_epochs, num_gpus=gpus_per_trial
+    # Static configs that does not change across trials
+    dm = DataModuleMNIST()
+    # doesn't call prepare data
+    logger = TensorBoardLogger(save_dir=os.getcwd(), name="tune-ptl-example", version=".")
+    n_devices = torch.cuda.device_count() or 0
+    accelerator = 'cpu' if n_devices == 0 else 'gpu'
+    print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
+
+    wandb_logger = WandbLogger(project="datasetname",
+                               log_model=True,
+                               name=f"{config['batch_size']}_modelname",
+                               entity="insane_gupta", group='modelname', )
+
+    static_lightning_config = (
+        LightningConfigBuilder()
+        .module(cls=LightningMNISTClassifier)
+        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=wandb_logger)
+        .fit_params(datamodule=dm)
+        .checkpointing(monitor="ptl/val_accuracy", save_top_k=2, mode="max")
+        .build()
     )
+
+    # Searchable configs across different trials
+    searchable_lightning_config = (
+        LightningConfigBuilder()
+        .module(config={
+            "layer_1": tune.choice([32, 64, 128]),
+            "layer_2": tune.choice([64, 128, 256]),
+            "lr": tune.loguniform(1e-4, 1e-1),
+            "batch_size": tune.choice([32, 64, 128]),
+        })
+        .build()
+    )
+
+    # Make sure to also define an AIR CheckpointConfig here
+    # to properly save checkpoints in AIR format.
+    run_config = RunConfig(
+        checkpoint_config=CheckpointConfig(
+            num_to_keep=2,
+            checkpoint_score_attribute="ptl/val_accuracy",
+            checkpoint_score_order="max",
+        ),
+    )
+
+    scheduler = ASHAScheduler(max_t=num_epochs, grace_period=1, reduction_factor=2)
+
+    scaling_config = ScalingConfig(
+        # no of other nodes?
+        num_workers=1, use_gpu=True, resources_per_worker={"CPU": 1, "GPU": gpus_per_trial}
+    )
+
+    lightning_trainer = LightningTrainer(
+        lightning_config=static_lightning_config,
+        scaling_config=scaling_config,
+        run_config=run_config,
+    )
+    reporter = CLIReporter(
+        parameter_columns=["layer_1", "layer_2", "lr", "batch_size"],
+        metric_columns=["loss", "mean_accuracy", "training_iteration"])
+
     tuner = tune.Tuner(
-        tune.with_resources(trainable, resources={"cpu": 1, "gpu": gpus_per_trial}),
+        lightning_trainer,
+        param_space={"lightning_config": searchable_lightning_config},
         tune_config=tune.TuneConfig(
+            time_budget_s=300,
             metric="ptl/val_accuracy",
             mode="max",
             num_samples=num_samples,
-            time_budget_s=200,
-            reuse_actors=True,
-
+            scheduler=scheduler,
         ),
         run_config=air.RunConfig(
-            name=exp_name,
+            name="tune_mnist_asha",
             verbose=2,
-            stop={"training_iteration": 5 if args.smoke_test else 20},
+            progress_reporter=reporter,
         ),
-        param_space=config,
+
     )
+
+
     try:
         results = tuner.fit()
-        print("Best hyperparameters found were: ", results.get_best_result().config)
+        best_result = results.get_best_result(metric="ptl/val_accuracy", mode="max")
+        print("Best hyperparameters found were: ", best_result)
     except ray.exceptions.RayTaskError:
         print("User function raised an exception!")
     except Exception as e:
@@ -203,23 +282,29 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    # args = parse_args()
+    #
+    # if args.server_address:
+    #     context = ray.init(f"ray://{args.server_address}")
+    # elif args.ray_address:
+    #     context = ray.init(address=args.ray_address)
+    # elif args.smoke_test:
+    #     context = ray.init()
+    # else:
+    #     context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+    # print("Dashboard URL: http://{}".format(context.dashboard_url))
 
-    if args.server_address:
-        context = ray.init(f"ray://{args.server_address}")
-    elif args.ray_address:
-        context = ray.init(address=args.ray_address)
-    elif args.smoke_test:
-        context = ray.init()
-    else:
-        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
-    print("Dashboard URL: http://{}".format(context.dashboard_url))
+    parser = argparse.ArgumentParser(description="Tune on local")
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="Finish quickly for testing") # store_false will default to True
+    parser.add_argument("--exp-name", type=str, default="tune_mnist")
+    args, _ = parser.parse_known_args()
 
     # Start training
     if args.smoke_test:
         print("Smoketesting...")
-        train_mnist_tune(config={"layer_1": 32, "layer_2": 64, "lr": 1e-3, "batch_size": 64},
-                         num_epochs=1, num_gpus=0)
-        tune_mnist(num_samples=2, num_epochs=1, gpus_per_trial=2, exp_name=args.exp_name)
+        # train_mnist_tune(config={"layer_1": 32, "layer_2": 64, "lr": 1e-3, "batch_size": 64},
+        #                  num_epochs=1, num_gpus=2)
+        tune_mnist(num_samples=1, num_epochs=1, gpus_per_trial=0, exp_name=args.exp_name)
     else:
-        tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name=args.exp_name)
+        tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=8,exp_name=args.exp_name)
