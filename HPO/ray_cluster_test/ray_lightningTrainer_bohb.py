@@ -134,7 +134,7 @@ class LightningMNISTClassifier(pl.LightningModule):
         print("fit end")
 
 
-def train_mnist(config, data_dir=None, num_epochs=2):
+def train_mnist(config, data_dir=None, num_epochs=2, num_gpus=1):
     print("Running in IP ---> ", socket.gethostbyname(socket.gethostname()))
     if torch.cuda.is_available():
         print(f"GPU is available { torch.cuda.device_count()}")
@@ -155,9 +155,10 @@ def train_mnist(config, data_dir=None, num_epochs=2):
 
     trainer = pl.Trainer(
         logger=wandb_logger,
-        max_epochs=num_epochs,
+        max_epochs=1,
         accelerator=accelerator,
-        devices='auto', strategy='auto',  # Use whatver device is available
+        devices= "auto",#num_gpus,
+        strategy='auto',  # Use whatver device is available
         enable_progress_bar=True,
         callbacks=[TuneReportCallback(metrics, on="validation_end")])
     trainer.fit(model, dm)
@@ -189,9 +190,9 @@ def parse_args():
 
 def mnist_bohb(smoke_test=False):
     if torch.cuda.is_available():
-        print(f"GPU is available { torch.cuda.device_count()}")
+        print(f"MNIST BOHB GPU is available { torch.cuda.device_count()}")
     else:
-        print("GPU is not available")
+        print("MNIST BOHB GPU is not available")
     ## BOHB CONFIGURATION
     num_epochs = 10
     gpus_per_trial = 2  # set this to higher if using GPU
@@ -204,12 +205,18 @@ def mnist_bohb(smoke_test=False):
         "lr": tune.loguniform(1e-4, 1e-1),
         "batch_size": tune.choice([32, 64, 128]),
     }
-    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial}
+
+    reporter = tune.CLIReporter(
+        parameter_columns=["layer_1", "layer_2", "lr", "batch_size"],
+        metric_columns=["loss", "mean_accuracy", "training_iteration"])
+
+    resources_per_trial = {"cpu": 2, "gpu": 1}
 
     trainable = tune.with_parameters(
         train_mnist,
         data_dir=data_dir, # params for the train_mnist function
-        num_epochs=num_epochs,) # change this?
+        num_epochs=num_epochs,
+        num_gpus=1) # change this?
 
     # set all the resources to be used by BOHB here.
     resources_per_trial = {"cpu": 1, "gpu": gpus_per_trial}
@@ -229,10 +236,9 @@ def mnist_bohb(smoke_test=False):
     )
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
     tuner = tune.Tuner(
-        resource_trainable,
+        tune.with_resources(trainable, resources=resources_per_trial),
         run_config=air.RunConfig(
-            name="bohb_test", stop={"training_iteration": 2 if smoke_test else max_iterations,"acc": 0.99}
-        ),
+            name="bohb_test1", progress_reporter=reporter,),
         tune_config=tune.TuneConfig(
             metric="acc",
             mode="max",
