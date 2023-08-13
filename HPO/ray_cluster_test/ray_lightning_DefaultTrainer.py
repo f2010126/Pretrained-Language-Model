@@ -86,8 +86,8 @@ class LightningMNISTClassifier(pl.LightningModule):
         logits = self.forward(x)
         loss = F.nll_loss(logits, y)
         acc = self.accuracy(logits, y)
-        self.log("ptl/train_loss", loss)
-        self.log("ptl/train_accuracy", acc)
+        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
@@ -103,9 +103,9 @@ class LightningMNISTClassifier(pl.LightningModule):
         outputs = self.val_output_list
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-        self.log("ptl/val_loss", avg_loss)
-        self.log("ptl/val_accuracy", avg_acc)
-        return {"val_loss": avg_loss, "val_accuracy": avg_acc}
+        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        self.log("ptl/val_accuracy", avg_acc,on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True) # self.log stuff is used by the trainer.
+        return {"loss": avg_loss, "acc": avg_acc}
 
     def on_fit_end(self):
         print("---------- Finished training")
@@ -120,20 +120,22 @@ def train_mnist_tune(config, num_epochs=10, num_gpus=0):
         print("No GPU available")
     data_dir = os.path.abspath("./data")
     model = LightningMNISTClassifier(config, data_dir)
-    with FileLock(os.path.expanduser("~/.data.lock")):
-        dm = DataModuleMNIST()
+    dm = DataModuleMNIST()
     metrics = {"loss": "val_loss", "acc": "val_accuracy"}
     n_devices = torch.cuda.device_count()
     accelerator = 'cpu' if n_devices == 0 else 'auto'
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         # If fractional GPUs passed in, convert to int.
-        devices="auto",
+        devices=num_gpus,
         accelerator="auto",
+        strategy="ddp",
         enable_progress_bar=True,
-        callbacks=[TuneReportCallback(["val_loss", "val_accuracy" ], on="validation_end")],
+        callbacks=[TuneReportCallback(['ptl/val_loss','ptl/val_accuracy'], on="validation_end")],
     )
+    print("----->Starting training")
     trainer.fit(model, dm)
+    print("Finished training")
 
 
 
@@ -151,7 +153,7 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
     tuner = tune.Tuner(
         tune.with_resources(trainable, resources={"cpu": 1, "gpu": gpus_per_trial}),
         tune_config=tune.TuneConfig(
-            metric="acc",
+            metric="ptl/val_accuracy",
             mode="max",
             num_samples=num_samples,
             time_budget_s=200,
@@ -161,7 +163,7 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
         run_config=air.RunConfig(
             name=exp_name,
             verbose=2,
-            stop={"training_iteration": 1},
+            stop={"training_iteration": 5 if args.smoke_test else 20},
         ),
         param_space=config,
     )
@@ -172,6 +174,8 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
         print("User function raised an exception!")
     except Exception as e:
         print("Other error", e)
+
+    print("END")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Tune on MultiNode")
