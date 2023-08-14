@@ -174,15 +174,11 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
     accelerator = 'cpu' if n_devices == 0 else 'gpu'
     print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
 
-    wandb_logger = WandbLogger(project="datasetname",
-                               log_model=True,
-                               name=f"{config['batch_size']}_modelname",
-                               entity="insane_gupta", group='modelname', )
 
     static_lightning_config = (
         LightningConfigBuilder()
         .module(cls=LightningMNISTClassifier)
-        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=wandb_logger)
+        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=logger)
         .fit_params(datamodule=dm)
         .checkpointing(monitor="ptl/val_accuracy", save_top_k=2, mode="max")
         .build()
@@ -239,7 +235,7 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
         run_config=air.RunConfig(
             name="tune_mnist_asha",
             verbose=2,
-            progress_reporter=reporter,
+           # progress_reporter=reporter,
         ),
 
     )
@@ -296,7 +292,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Tune on local")
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Finish quickly for testing") # store_false will default to True
+        "--smoke-test", action="store_false", help="Finish quickly for testing") # store_false will default to True
     parser.add_argument("--exp-name", type=str, default="tune_mnist")
     args, _ = parser.parse_known_args()
 
