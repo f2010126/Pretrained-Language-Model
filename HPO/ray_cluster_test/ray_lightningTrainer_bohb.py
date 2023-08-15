@@ -6,7 +6,9 @@ import torch
 from ray import tune
 from ray.tune.integration.pytorch_lightning import TuneReportCallback
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
+from ray.air.config import RunConfig, ScalingConfig, CheckpointConfig
+import traceback
+
 from torch.utils.data import random_split, DataLoader
 from torchmetrics import Accuracy
 from torchvision import datasets, transforms
@@ -16,6 +18,9 @@ import wandb
 from pytorch_lightning.loggers import WandbLogger
 import ray
 import argparse
+from ray.tune import CLIReporter
+from ray.train.lightning import LightningConfigBuilder, LightningTrainer
+from pytorch_lightning.loggers import TensorBoardLogger
 
 # local changes
 import uuid
@@ -238,7 +243,10 @@ def mnist_bohb(smoke_test=False):
     tuner = tune.Tuner(
         tune.with_resources(trainable, resources=resources_per_trial),
         run_config=air.RunConfig(
-            name="bohb_test1", progress_reporter=reporter,),
+            name="bohb_test1",
+            # progress_reporter=reporter,
+            storage_path="./ray_results",
+        ),
         tune_config=tune.TuneConfig(
             metric="acc",
             mode="max",
@@ -251,19 +259,151 @@ def mnist_bohb(smoke_test=False):
     results = tuner.fit()
     print("Best hyperparameters found were: ", results.get_best_result().config)
 
+def air_bohb(smoke_test=False,gpus_per_trial=0, exp_name='bohb_mnist'):
+    config = {
+        "layer_1": tune.choice([32, 64, 128]),
+        "layer_2": tune.choice([64, 128, 256]),
+        "lr": tune.loguniform(1e-4, 1e-1),
+        "batch_size": tune.choice([32, 64, 128]),
+    }
+    metric = "ptl/val_accuracy",
+    mode = "max",
+    # Static configs that does not change across trials
+    dm = DataModuleMNIST()
+    # doesn't call prepare data
+    logger = TensorBoardLogger(save_dir=os.getcwd(), name="tune-ptl-example", version=".")
+    if torch.cuda.is_available():
+        n_devices = torch.cuda.device_count()
+        accelerator = 'gpu'
+        use_gpu = True
+        gpus_per_trial = 1
+    else:
+        n_devices = 0
+        accelerator = 'cpu'
+        use_gpu = False
+
+    print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
+    num_epochs=1 if smoke_test else 10
+    static_lightning_config = (
+        LightningConfigBuilder()
+        .module(cls=LightningMNISTClassifier)
+        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=logger)
+        .fit_params(datamodule=dm)
+        .checkpointing(monitor="ptl/val_accuracy", save_top_k=2, mode="max")
+        .build()
+    )
+
+    # Searchable configs across different trials
+    searchable_lightning_config = (
+        LightningConfigBuilder()
+        .module(config={
+            "layer_1": tune.choice([32, 64, 128]),
+            "layer_2": tune.choice([64, 128, 256]),
+            "lr": tune.loguniform(1e-4, 1e-1),
+            "batch_size": tune.choice([32, 64, 128]),
+        })
+        .build()
+    )
+
+    # Make sure to also define an AIR CheckpointConfig here
+    # to properly save checkpoints in AIR format.
+    run_config = RunConfig(
+        checkpoint_config=CheckpointConfig(
+            num_to_keep=2,
+            checkpoint_score_attribute="ptl/val_accuracy",
+            checkpoint_score_order="max",
+        ),
+    )
+
+    max_iterations = 3 #bohb will stop after this many evaluations in the given bracket/round
+    bohb_hyperband = HyperBandForBOHB(
+        time_attr="training_iteration",
+        max_t=max_iterations,
+        reduction_factor=2,
+        stop_last_trials=False,
+    )
+
+    bohb_search = TuneBOHB(
+        # space=config_space,  # If you want to set the space manually
+    )
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
+
+    scaling_config = ScalingConfig(
+        # no of other nodes?
+        num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, "GPU": gpus_per_trial}
+    )
+
+    lightning_trainer = LightningTrainer(
+        lightning_config=static_lightning_config,
+        scaling_config=scaling_config,
+        run_config=run_config,
+    )
+    # reporter = CLIReporter(
+    #     parameter_columns=["layer_1", "layer_2", "lr", "batch_size"],
+    #     metric_columns=["loss", "mean_accuracy", "training_iteration"])
+
+    tuner = tune.Tuner(
+        lightning_trainer,
+        param_space={"lightning_config": searchable_lightning_config},
+        tune_config=tune.TuneConfig(
+            time_budget_s=300,
+            metric="ptl/val_accuracy",
+            mode="max",
+            num_samples=100 if smoke_test else 10,
+            scheduler=bohb_hyperband,
+            search_alg=bohb_search,
+        ),
+        run_config=air.RunConfig(
+            name="tune_mnist_bohb",
+            verbose=2,
+            # progress_reporter=reporter,
+        ),
+
+    )
+
+    try:
+        results = tuner.fit()
+        best_result = results.get_best_result(metric="ptl/val_accuracy", mode="max")
+        print("Best hyperparameters found were: ", best_result.config)
+    except ray.exceptions.RayTaskError:
+        print("User function raised an exception!")
+    except Exception as e:
+        print("Other error", e)
+        print(traceback.format_exc())
+
+    print("END")
+
+
+
+
+
+
+
 if __name__ == "__main__":
     args = parse_args()
 
     # os.environ['RAY_ADDRESS'] = '127.0.0.1:6379'
 
-    if args.server_address:
-        context = ray.init(f"ray://{args.server_address}")
-    elif args.ray_address:
-        context = ray.init(address=args.ray_address)
-    elif args.smoke_test:
-        context = ray.init(num_cpus=2)
+    # if args.server_address:
+    #     context = ray.init(f"ray://{args.server_address}")
+    # elif args.ray_address:
+    #     context = ray.init(address=args.ray_address)
+    # elif args.smoke_test:
+    #     context = ray.init(num_cpus=2)
+    # else:
+    #     context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+
+    # print("Dashboard URL: http://{}".format(context.dashboard_url))
+
+    parser = argparse.ArgumentParser(description="Tune on local")
+    parser.add_argument(
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+    parser.add_argument("--exp-name", type=str, default="tune_mnist")
+    args, _ = parser.parse_known_args()
+
+    if args.smoke_test:
+        air_bohb(smoke_test=args.smoke_test,gpus_per_trial=0, exp_name=args.exp_name)
+
     else:
-        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
-    print("Dashboard URL: http://{}".format(context.dashboard_url))
-    mnist_bohb(smoke_test=args.smoke_test)
+        air_bohb(smoke_test=args.smoke_test,gpus_per_trial=0, exp_name=args.exp_name)
 

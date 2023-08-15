@@ -235,6 +235,7 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0,exp_name="tune_mn
         run_config=air.RunConfig(
             name="tune_mnist_asha",
             verbose=2,
+            storage_path="./ray_results",
            # progress_reporter=reporter,
         ),
 
