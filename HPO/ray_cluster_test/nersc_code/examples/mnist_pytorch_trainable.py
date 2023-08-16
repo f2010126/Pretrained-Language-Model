@@ -13,6 +13,8 @@ import ray
 from ray import tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
 
+from tqdm import tqdm
+
 # Change these values if you want the training to run quicker or slower.
 EPOCH_SIZE = 512
 TEST_SIZE = 256
@@ -34,7 +36,7 @@ class ConvNet(nn.Module):
 def train(model, optimizer, train_loader, device=None):
     device = device or torch.device("cpu")
     model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
+    for batch_idx, (data, target) in enumerate(tqdm(train_loader)):
         if batch_idx * len(data) > EPOCH_SIZE:
             return
         data, target = data.to(device), target.to(device)
@@ -45,7 +47,7 @@ def train(model, optimizer, train_loader, device=None):
         optimizer.step()
 
 
-def test(model, data_loader, device=None):
+def model_test(model, data_loader, device=None):
     device = device or torch.device("cpu")
     model.eval()
     correct = 0
@@ -102,7 +104,7 @@ def train_mnist(config):
 
     while True:
         train(model, optimizer, train_loader, device)
-        acc = test(model, test_loader, device)
+        acc = model_test(model, test_loader, device)
         # Set this to run Tune.
         tune.report(mean_accuracy=acc)
 
@@ -153,7 +155,7 @@ if __name__ == "__main__":
             "training_iteration": 5 if args.smoke_test else 100
         },
         resources_per_trial={
-            "cpu": 32,
+            "cpu": 4,
             "gpu": int(args.cuda)  # set this for GPUs
         },
         num_samples=1 if args.smoke_test else 50,

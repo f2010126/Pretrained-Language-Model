@@ -141,7 +141,7 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
         ),
         stop={"training_iteration": 1} if smoke_test else None,
         progress_reporter=reporter,
-        local_dir="~/ray_results/",
+        local_dir="./ray_results/",
         name="tune_transformer_pbt",
         log_to_file=True,
     )

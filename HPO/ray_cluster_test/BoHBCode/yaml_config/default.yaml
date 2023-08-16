@@ -1,17 +1,17 @@
 
 project_name: "HPO"
-group_name: "BERT"
+group_name: "Amazon_Reviews_Multi"
 run_name: "Bert-Adapter-Training"
-task_name: 'sst2'
+task_name: 'amazon_reviews_multi'
 output_dir: './adapter_training_output'
 
 hyperparameters:
-  model_name_or_path: 'bert-base-uncased'
+  model_name_or_path: 'bert-base-german-cased'
   max_seq_length: 256
   do_lower_case: True
   train_batch_size_gpu: 32
   eval_batch_size_gpu: 32
-  learning_rate: 3e-3
+  learning_rate: 3.0e-3
   optimizer_name: 'AdamW'
   scheduler_name: 'linear'
   num_train_epochs: 3

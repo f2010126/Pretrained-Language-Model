@@ -31,9 +31,10 @@ class MyCallback(Callback):
         print(f"Got result: {result['ptl/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
 
     def on_trial_error(
-        self, iteration: int, trials: List["Trial"], trial: "Trial", **info
+            self, iteration: int, trials: List["Trial"], trial: "Trial", **info
     ):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
+
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -136,7 +137,7 @@ class LightningMNISTClassifier(pl.LightningModule):
         self.log("ptl/val_accuracy", accuracy)
         return {"val_loss": loss, "val_accuracy": accuracy}
 
-    def on_validation_epoch_end(self,):
+    def on_validation_epoch_end(self, ):
         outputs = self.val_output_list
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
@@ -150,7 +151,6 @@ class LightningMNISTClassifier(pl.LightningModule):
 
 # BOHB LOOP
 def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
-
     # Static configs that does not change across trials
     dm = DataModuleMNIST()
     # doesn't call prepare data
@@ -202,9 +202,10 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
     # scheduler
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
-        max_t=max_iterations, # max time per trial? max length of time a trial
-        reduction_factor=2, # cut down trials by factor of?
-        stop_last_trials=True, #Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
+        max_t=max_iterations,  # max time per trial? max length of time a trial
+        reduction_factor=2,  # cut down trials by factor of?
+        stop_last_trials=True,
+        # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
     )
 
     # search Algo
@@ -231,10 +232,10 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
         lightning_trainer,
         param_space={"lightning_config": searchable_lightning_config},
         tune_config=tune.TuneConfig(
-            time_budget_s=750, # Max time for the whole search
+            time_budget_s=750,  # Max time for the whole search
             metric="ptl/val_accuracy",
             mode="max",
-            num_samples=3 if smoke_test else 100, # Number of times to sample
+            num_samples=3 if smoke_test else 100,  # Number of times to sample
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
             reuse_actors=True,
@@ -277,7 +278,7 @@ def parse_args():
         default=False,
         help="Enables GPU training")
     parser.add_argument(
-        "--smoke-test", action="store_false", help="Finish quickly for testing") # store_false will default to True
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument(
         "--ray-address",
         help="Address of Ray cluster for seamless distributed execution.")

@@ -9,11 +9,11 @@ import time
 import torch
 import yaml
 from yaml import load
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
     from yaml import Loader
-
 
 
 # should only get hpo config, and data dir.
@@ -23,7 +23,7 @@ def train_model(args, config=None):
     seed_everything(args.seed)
 
     # set up data loaders
-    dm = getDataModule(task_name= config['task_name'], model_name_or_path= hyperparameters['model_name_or_path'],
+    dm = getDataModule(task_name=config['task_name'], model_name_or_path=hyperparameters['model_name_or_path'],
                        max_seq_length=hyperparameters['max_seq_length'],
                        train_batch_size=hyperparameters['train_batch_size_gpu'],
                        eval_batch_size=hyperparameters['eval_batch_size_gpu'])
@@ -59,9 +59,10 @@ def train_model(args, config=None):
         logger=wandb_logger,
         max_epochs=hyperparameters['num_train_epochs'],
         accelerator=accelerator,
-        devices='auto', strategy='auto', # Use whatver device is available
-        max_steps=10, limit_val_batches=5,limit_test_batches=5, num_sanity_val_steps=0, # max_steps=20 and no sanity check
-        val_check_interval=5, check_val_every_n_epoch=1, # check_val_every_n_epoch=1 and every 5 batches
+        devices='auto', strategy='auto',  # Use whatver device is available
+        max_steps=10, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=0,
+        # max_steps=20 and no sanity check
+        val_check_interval=5, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
     )
     # train model
     print("Training model")
@@ -139,10 +140,12 @@ def parse_args():
                         type=int,
                         help="Seed used for training and evaluation.")
     parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="HPO")
-    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="Amazon") # Dataset name
-    parser.add_argument("--run_name", type=str, help="Name of WANDDB run.", default="Bert-Adapter-Training") # shoudld be model name
+    parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="Amazon")  # Dataset name
+    parser.add_argument("--run_name", type=str, help="Name of WANDDB run.",
+                        default="Bert-Adapter-Training")  # shoudld be model name
 
-    parser.add_argument("--yaml_config", type=str, help="Path to yaml config file.", default="ray_cluster_test/BoHBCode/yaml_config/default.yaml")
+    parser.add_argument("--yaml_config", type=str, help="Path to yaml config file.",
+                        default="ray_cluster_test/BoHBCode/yaml_config/default.yaml")
 
     return parser.parse_args()
 
@@ -157,7 +160,7 @@ if __name__ == "__main__":
         print("Could not read YAML file. Using default configs.")
         config = vars(args)
 
-    train_model(args=args,config=config)
+    train_model(args=args, config=config)
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)

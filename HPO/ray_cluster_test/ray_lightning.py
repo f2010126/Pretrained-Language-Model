@@ -1,7 +1,4 @@
-import math
 
-import ray
-import torch
 import pytorch_lightning as pl
 from filelock import FileLock
 from torch.utils.data import DataLoader, random_split
@@ -14,12 +11,14 @@ import torch
 # Tuning
 from pytorch_lightning.loggers import TensorBoardLogger
 from ray import air, tune
-from ray.air import session
+
 from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler, PopulationBasedTraining
+from ray.tune.schedulers import ASHAScheduler
 from ray.tune.integration.pytorch_lightning import TuneReportCallback, \
     TuneReportCheckpointCallback
 
+
+# TUNING WITH VANILLA PYTORCH LIGHTNING
 class LightningMNISTClassifier(pl.LightningModule):
     """
     This has been adapted from
@@ -132,6 +131,7 @@ def train_mnist(config):
 
     trainer.fit(model)
 
+
 def train_mnist_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
     if torch.cuda.is_available():
         print(f"No. of GPU available--->{torch.cuda.device_count()}")
@@ -179,12 +179,12 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
                                                     num_epochs=num_epochs,
                                                     num_gpus=gpus_per_trial,
                                                     data_dir=data_dir)
-    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial} #each uses 1 out of all cpus assigned.
+    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial}  # each uses 1 out of all cpus assigned.
 
     trainable_obj = tune.with_resources(
-            train_fn_with_parameters,
-            resources=resources_per_trial
-        )
+        train_fn_with_parameters,
+        resources=resources_per_trial
+    )
     tuner = tune.Tuner(
         tune.with_resources(
             trainable=train_fn_with_parameters,
@@ -206,9 +206,10 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
 
     print("Best hyperparameters found were: ", results.get_best_result().config)
 
+
 if __name__ == "__main__":
     gpus_available = os.environ.get('SLURM_GPUS_ON_NODE') if torch.cuda.is_available() else 0
     cpus_available = os.environ.get('SLURM_CPUS_ON_NODE') or 0
 
     # var_heer=ray.init(num_cpus=cpus_available, num_gpus=gpus_available) # so this uese only 1 cpu and n gpu
-    tune_mnist_asha(num_samples=3, num_epochs=2,gpus_per_trial=gpus_available)
+    tune_mnist_asha(num_samples=3, num_epochs=2, gpus_per_trial=gpus_available)

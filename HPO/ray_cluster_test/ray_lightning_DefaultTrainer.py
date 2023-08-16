@@ -26,10 +26,9 @@ class MyCallback(Callback):
     def on_trial_result(self, iteration, trials, trial, result, **info):
         print(f"Got result: {result['ptl/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
 
-    def on_trial_error(
-        self, iteration: int, trials: List["Trial"], trial: "Trial", **info
-    ):
+    def on_trial_error(self, iteration: int, trials: List["Trial"], trial: "Trial", **info):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
+
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -109,8 +108,8 @@ class LightningMNISTClassifier(pl.LightningModule):
         logits = self.forward(x)
         loss = F.nll_loss(logits, y)
         acc = self.accuracy(logits, y)
-        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
-        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
@@ -134,8 +133,6 @@ class LightningMNISTClassifier(pl.LightningModule):
     def on_validation_end(self):
         # last hook that's used by Trainer.
         print("---------- Finished validation?")
-
-
 
 
 def train_mnist_tune(config, num_epochs=10, num_gpus=0):
@@ -189,7 +186,7 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0, exp_name="tune_m
     static_lightning_config = (
         LightningConfigBuilder()
         .module(cls=LightningMNISTClassifier)
-        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=logger,)
+        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=logger, )
         .fit_params(datamodule=dm)
         # .strategy(name='ddp')
         .checkpointing(monitor="ptl/val_accuracy", save_top_k=2, mode="max")
@@ -219,9 +216,9 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0, exp_name="tune_m
         callbacks=[MyCallback()]
     )
 
-    scheduler = ASHAScheduler(max_t=num_epochs, # max no of epochs a trial can run
+    scheduler = ASHAScheduler(max_t=num_epochs,  # max no of epochs a trial can run
                               grace_period=1, reduction_factor=2,
-                              time_attr = "training_iteration")
+                              time_attr="training_iteration")
 
     scaling_config = ScalingConfig(
         # no of other nodes?
@@ -239,15 +236,15 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0, exp_name="tune_m
     tuner = tune.Tuner(
         lightning_trainer,
         param_space={"lightning_config": searchable_lightning_config},
-        tune_config=tune.TuneConfig( # for Tuner
+        tune_config=tune.TuneConfig(  # for Tuner
             time_budget_s=3000,
             metric="ptl/val_accuracy",
             mode="max",
-            num_samples=num_samples, # Number of times to sample from the hyperparameter space
+            num_samples=num_samples,  # Number of times to sample from the hyperparameter space
             scheduler=scheduler,
             reuse_actors=False,
         ),
-        run_config=air.RunConfig( # for Tuner.run
+        run_config=air.RunConfig(  # for Tuner.run
             name=exp_name,
             verbose=2,
             storage_path="./ray_results",

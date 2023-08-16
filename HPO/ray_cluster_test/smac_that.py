@@ -10,8 +10,6 @@ from sklearn.svm import SVC
 from sklearn.model_selection import cross_val_score
 import torch
 
-iris = datasets.load_iris()
-
 # Lightning
 import pytorch_lightning as pl
 from filelock import FileLock
@@ -22,6 +20,10 @@ from torchvision import transforms
 import os
 import torch
 from pytorch_lightning.loggers import TensorBoardLogger
+
+iris = datasets.load_iris()
+
+
 class LightningMNISTClassifier(pl.LightningModule):
     """
     This has been adapted from PL's MNIST example
@@ -123,6 +125,8 @@ class LightningMNISTClassifier(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
+
+
 def train_mnist(config: Configuration, seed: int = 0):
     data_dir = "~/data"
     if torch.cuda.is_available():
@@ -143,7 +147,8 @@ def train_mnist(config: Configuration, seed: int = 0):
     trainer.fit(model)
     acc = trainer.callback_metrics["ptl/val_accuracy"].item()
     print(f'Accuracy returned----> {acc}')
-    return 1-acc
+    return 1 - acc
+
 
 def train(config: Configuration, seed: int = 0) -> float:
     print(f'Config---> {config}')
@@ -156,30 +161,30 @@ def train(config: Configuration, seed: int = 0) -> float:
     print(f'Cross validation scores: {scores}')
     return 1 - np.mean(scores)
 
+
 if __name__ == "__main__":
     og_configspace = ConfigurationSpace({"C": (0.100, 1000.0)})
 
     configspace = ConfigurationSpace(name='model_space',
                                      seed=42,
-                                     space={"layer_1_size": Categorical("layer_1_size",[32, 64, 128]),
-                                            "layer_2_size": Categorical("layer_2_size",[64, 128, 256]),
-                                            "lr": Float("lr",bounds=(1e-4, 1e-1), log=True),
-                                            "batch_size": Categorical("batch_size",[32, 64, 128]),
+                                     space={"layer_1_size": Categorical("layer_1_size", [32, 64, 128]),
+                                            "layer_2_size": Categorical("layer_2_size", [64, 128, 256]),
+                                            "lr": Float("lr", bounds=(1e-4, 1e-1), log=True),
+                                            "batch_size": Categorical("batch_size", [32, 64, 128]),
                                             "epochs": Integer("epochs", bounds=(2, 5)),
                                             }
                                      )
 
-
     # Scenario object specifying the optimization environment
     # random identifier
-    id=uuid.uuid4()
+    id = uuid.uuid4()
     scenario = Scenario(configspace,
                         deterministic=True,
                         # trial_walltime_limit=300.0,
                         walltime_limit=3000,
                         n_trials=8,
                         n_workers=1,
-                        output_directory=f'smac_output_{id}',)
+                        output_directory=f'smac_output_{id}', )
 
     # Use SMAC to find the best configuration/hyperparameters
     smac = HyperparameterOptimizationFacade(scenario, train_mnist)

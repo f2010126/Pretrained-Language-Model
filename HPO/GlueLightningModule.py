@@ -37,16 +37,17 @@ class GLUETransformer(LightningModule):
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
 
         self.config = AutoConfig.from_pretrained(hyperparameters['model_name_or_path'], num_labels=num_labels)
-        self.model = AutoModelForSequenceClassification.from_pretrained(hyperparameters['model_name_or_path'], config=self.config)
+        self.model = AutoModelForSequenceClassification.from_pretrained(hyperparameters['model_name_or_path'],
+                                                                        config=self.config)
         # self.metric = evaluate.load(
         #     "glue", self.hparams.task_name, experiment_id=datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         # )
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
         self.optimizer_name = hyperparameters['optimizer_name']
         self.scheduler_name = hyperparameters['scheduler_name']
-        self.train_acc = evaluate.load( 'accuracy')
-        self.train_f1 = evaluate.load( 'f1')
-        self.train_bal_acc=evaluate.load( 'hyperml/balanced_accuracy')
+        self.train_acc = evaluate.load('accuracy')
+        self.train_f1 = evaluate.load('f1')
+        self.train_bal_acc = evaluate.load('hyperml/balanced_accuracy')
 
         self.prepare_data_per_node = True
 
@@ -100,7 +101,8 @@ class GLUETransformer(LightningModule):
             optimizer = AdamW(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'],
                               eps=self.hparams.adam_epsilon)
         elif self.optimizer_name == "Adam":
-            optimizer = Adam(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'], eps=self.hparams.adam_epsilon)
+            optimizer = Adam(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'],
+                             eps=self.hparams.adam_epsilon)
 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,

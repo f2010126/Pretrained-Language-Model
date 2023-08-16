@@ -65,8 +65,6 @@ class GLUEDataModule(LightningDataModule):
         self.num_labels = self.glue_task_num_labels[task_name]
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
 
-
-
     def setup(self, stage: str):
         self.dataset = datasets.load_dataset("glue", self.task_name)
 
@@ -313,8 +311,6 @@ class AmazonMultiReview(LightningDataModule):
         else:
             print("File exist. Load Tokenized data in setup.")
 
-
-
     def setup(self, stage: str):
         # load data here
         try:
@@ -349,7 +345,6 @@ class AmazonMultiReview(LightningDataModule):
 
 
 class TyqiangzData(LightningDataModule):
-
     task_metadata = {
         "num_labels": 3,
         "label_col": "label",
@@ -426,7 +421,6 @@ class TyqiangzData(LightningDataModule):
         else:
             print("File exist. Load Tokenized data in setup.")
 
-
     def setup(self, stage: str):
         # load data here
         try:
@@ -464,34 +458,33 @@ class TyqiangzData(LightningDataModule):
 def getDataModule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                   max_seq_length: int = 128, train_batch_size: int = 32,
                   eval_batch_size: int = 32):
-
     if task_name == "sst2":
         return GLUEDataModule(model_name_or_path=model_name_or_path, task_name="sst2",
-                          max_seq_length=max_seq_length,
-                          train_batch_size=train_batch_size,
-                          eval_batch_size=eval_batch_size)
+                              max_seq_length=max_seq_length,
+                              train_batch_size=train_batch_size,
+                              eval_batch_size=eval_batch_size)
 
     elif task_name == "amazon_reviews_multi":
-        return AmazonMultiReview(model_name_or_path=model_name_or_path,task_name="amazon_reviews_multi",
-                             max_seq_length=max_seq_length, train_batch_size=train_batch_size,
-                             eval_batch_size=eval_batch_size,
-                             label_column='stars',
-                             encode_columns=['review_body', 'review_title'])
+        return AmazonMultiReview(model_name_or_path=model_name_or_path, task_name="amazon_reviews_multi",
+                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                                 eval_batch_size=eval_batch_size,
+                                 label_column='stars',
+                                 encode_columns=['review_body', 'review_title'])
 
     elif task_name == "tyqiangz":
         return TyqiangzData(model_name_or_path=model_name_or_path,
-                             task_name="tyqiangz/multilingual-sentiments",
-                             max_seq_length=max_seq_length,
-                             train_batch_size=train_batch_size,
-                             eval_batch_size=eval_batch_size,
-                             label_column='label',
-                             encode_columns=['text'])
+                            task_name="tyqiangz/multilingual-sentiments",
+                            max_seq_length=max_seq_length,
+                            train_batch_size=train_batch_size,
+                            eval_batch_size=eval_batch_size,
+                            label_column='label',
+                            encode_columns=['text'])
 
 
 if __name__ == "__main__":
     dm = getDataModule(task_name="tyqiangz",
                        model_name_or_path="distilbert-base-uncased",
-                       max_seq_length=256, train_batch_size=32,eval_batch_size=32)
+                       max_seq_length=256, train_batch_size=32, eval_batch_size=32)
     # dm.prepare_data()
     dm.setup("fit")
     print(next(iter(dm.train_dataloader())))
