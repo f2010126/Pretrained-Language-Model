@@ -1,290 +1,249 @@
-import os
-import sys
-import numpy
+import logging
 import argparse
-import ConfigSpace as CS
-import yaml
-from copy import deepcopy
-import torch
-
-# go to parent directory
-script_dir = os.path.dirname(os.path.abspath(__file__))
-par_dir = os.path.join(script_dir, os.pardir)
-sys.path.append(par_dir)
-os.chdir(par_dir)
-
-import random
-import numpy as np
+import pickle
 import time
+import ConfigSpace as CS
+import ConfigSpace.hyperparameters as CSH
+import random
+from hpbandster.core.worker import Worker
+
+import logging
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
-import psutil
-from hpbandster.core.worker import Worker
-from hpbandster.core.master import Master
-from hpbandster.optimizers.iterations import SuccessiveHalving
-from hpbandster.optimizers.config_generators.bohb import BOHB as BOHB
+import os
+from hpbandster.optimizers import BOHB as BOHB
 
-class ExperimentWrapper():
-    def get_bohb_parameters(self):
-        params = {}
-        params['min_budget'] = 1
-        params['max_budget'] = 1
-        params['eta'] = 2
-        params['random_fraction'] = 1
-        params['iterations'] = 10000
+try:
+    import torch
+    import torch.utils.data
+    import torch.nn as nn
+    import torch.nn.functional as F
+except ImportError:
+    raise ImportError("For this example you need to install pytorch.")
 
-        return params
+try:
+    import torchvision
+    import torchvision.transforms as transforms
+except ImportError:
+    raise ImportError("For this example you need to install pytorch-vision.")
 
-    def get_configspace(self):
-        config_space = CS.ConfigurationSpace()
-        config_space.add_hyperparameter(CS.UniformFloatHyperparameter('x', lower=0, upper=1))
-        return config_space
+logging.basicConfig(level=logging.DEBUG)
 
-    def get_specific_config(self, cso, default_config, budget):
-        return self.get_configspace().sample_configuration()
 
-    def compute(self, working_dir, bohb_id, config_id, cso, budget, *args, **kwargs):
+class PyTorchWorker(Worker):
+    def __init__(self, N_train=8192, N_valid=1024, **kwargs):
+        super().__init__(**kwargs)
 
+        batch_size = 64
+
+        # Load the Data here
+
+    def compute(self, config, budget, working_directory, *args, **kwargs):
+        """
+        Simple example for a compute function using a feed forward network.
+        It is trained on the MNIST dataset.
+        The input parameter "config" (dictionary) contains the sampled configurations passed by the bohb optimizer
+        """
+
+        # device = torch.device('cpu')
         if torch.cuda.is_available():
-            print(f'Number of devices: {torch.cuda.device_count()}')
+            print("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
         else:
-            print('No GPU available.')
-
-        config = self.get_specific_config()
-
-        print('----------------------------')
-        print("START BOHB ITERATION")
-        print('CONFIG: ' + str(config))
-        print('BUDGET: ' + str(budget))
-        print('----------------------------')
-
-        res = numpy.clip(config['x'] + numpy.random.randn() / budget, config['x'] / 2, 1.5 * config['x'])
-        time.sleep(0.5)
-
+            print("CUDA not available, using CPU")
+        time.sleep(5)
+        validation_accuracy = random.uniform(0, 1)
+        test_accuracy = random.uniform(0, 1)
+        train_accuracy = random.uniform(0, 1)
         return ({
-            'loss': float(res),  # this is the a mandatory field to run hyperband
-            'info': res  # can be used for any user-defined information - also mandatory
+            'loss': 1 - validation_accuracy,  # remember: HpBandSter always minimizes!
+            'info': {'test accuracy': test_accuracy,
+                     'train accuracy': train_accuracy,
+                     'validation accuracy': validation_accuracy,
+                     }
+
         })
 
+    def evaluate_accuracy(self, model, data_loader):
+        model.eval()
+        correct = 0
+        with torch.no_grad():
+            for x, y in data_loader:
+                output = model(x)
+                # test_loss += F.nll_loss(output, target, reduction='sum').item() # sum up batch loss
+                pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
+                correct += pred.eq(y.view_as(pred)).sum().item()
+        # import pdb; pdb.set_trace()
+        accuracy = correct / len(data_loader.sampler)
+        return (accuracy)
+
+    @staticmethod
+    def get_configspace():
+        """
+        It builds the configuration space with the needed hyperparameters.
+        It is easily possible to implement different types of hyperparameters.
+        Beside float-hyperparameters on a log scale, it is also able to handle categorical input parameter.
+        :return: ConfigurationsSpace-Object
+        """
+        cs = CS.ConfigurationSpace()
+
+        lr = CSH.UniformFloatHyperparameter('lr', lower=1e-6, upper=1e-1, default_value='1e-2', log=True)
+
+        # For demonstration purposes, we add different optimizers as categorical hyperparameters.
+        # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
+        # SGD has a different parameter 'momentum'.
+        optimizer = CSH.CategoricalHyperparameter('optimizer', ['Adam', 'SGD'])
+
+        sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, default_value=0.9,
+                                                      log=False)
+
+        cs.add_hyperparameters([lr, optimizer, sgd_momentum])
+
+        # The hyperparameter sgd_momentum will be used,if the configuration
+        # contains 'SGD' as optimizer.
+        cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
+        cs.add_condition(cond)
+
+        num_conv_layers = CSH.UniformIntegerHyperparameter('num_conv_layers', lower=1, upper=3, default_value=2)
+
+        num_filters_1 = CSH.UniformIntegerHyperparameter('num_filters_1', lower=4, upper=64, default_value=16, log=True)
+        num_filters_2 = CSH.UniformIntegerHyperparameter('num_filters_2', lower=4, upper=64, default_value=16, log=True)
+        num_filters_3 = CSH.UniformIntegerHyperparameter('num_filters_3', lower=4, upper=64, default_value=16, log=True)
+
+        cs.add_hyperparameters([num_conv_layers, num_filters_1, num_filters_2, num_filters_3])
+
+        # You can also use inequality conditions:
+        cond = CS.GreaterThanCondition(num_filters_2, num_conv_layers, 1)
+        cs.add_condition(cond)
+
+        cond = CS.GreaterThanCondition(num_filters_3, num_conv_layers, 2)
+        cs.add_condition(cond)
+
+        dropout_rate = CSH.UniformFloatHyperparameter('dropout_rate', lower=0.0, upper=0.9, default_value=0.5,
+                                                      log=False)
+        num_fc_units = CSH.UniformIntegerHyperparameter('num_fc_units', lower=8, upper=256, default_value=32, log=True)
+
+        cs.add_hyperparameters([dropout_rate, num_fc_units])
+
+        return cs
 
 
-class BohbWorker(Worker):
-    def __init__(self, id, working_dir, experiment_wrapper, *args, **kwargs):
-        super(BohbWorker, self).__init__(*args, **kwargs)
-        print(kwargs)
+class MNISTConvNet(torch.nn.Module):
+    def __init__(self, num_conv_layers, num_filters_1, num_filters_2, num_filters_3, dropout_rate, num_fc_units,
+                 kernel_size):
+        super().__init__()
 
-        self.id = id
-        self.working_dir = working_dir
-        self.experiment_wrapper = experiment_wrapper
+        self.conv1 = nn.Conv2d(1, num_filters_1, kernel_size=kernel_size)
+        self.conv2 = None
+        self.conv3 = None
 
-    def compute(self, config_id, config, budget, *args, **kwargs):
-        return self.experiment_wrapper.compute(self.working_dir, self.id, config_id, config, budget, *args, **kwargs)
+        output_size = (28 - kernel_size + 1) // 2
+        num_output_filters = num_filters_1
 
+        if num_conv_layers > 1:
+            self.conv2 = nn.Conv2d(num_filters_1, num_filters_2, kernel_size=kernel_size)
+            num_output_filters = num_filters_2
+            output_size = (output_size - kernel_size + 1) // 2
 
+        if num_conv_layers > 2:
+            self.conv3 = nn.Conv2d(num_filters_2, num_filters_3, kernel_size=kernel_size)
+            num_output_filters = num_filters_3
+            output_size = (output_size - kernel_size + 1) // 2
 
-class BohbWrapper(Master):
-    def __init__(self, configspace=None,
-                 eta=3, min_budget=0.01, max_budget=1,
-                 min_points_in_model=None, top_n_percent=15,
-                 num_samples=64, random_fraction=1 / 3, bandwidth_factor=3,
-                 min_bandwidth=1e-3,
-                 **kwargs):
-        # TODO: Proper check for ConfigSpace object!
-        if configspace is None:
-            raise ValueError("You have to provide a valid CofigSpace object")
+        self.dropout = nn.Dropout(p=dropout_rate)
 
-        cg = BOHB(configspace=configspace,
-                  min_points_in_model=min_points_in_model,
-                  top_n_percent=top_n_percent,
-                  num_samples=num_samples,
-                  random_fraction=random_fraction,
-                  bandwidth_factor=bandwidth_factor,
-                  min_bandwidth=min_bandwidth
-                  )
+        self.conv_output_size = num_output_filters * output_size * output_size
 
-        super().__init__(config_generator=cg, **kwargs)
+        self.fc1 = nn.Linear(self.conv_output_size, num_fc_units)
+        self.fc2 = nn.Linear(num_fc_units, 10)
 
-        # Hyperband related stuff
-        self.eta = eta
-        self.min_budget = min_budget
-        self.max_budget = max_budget
+    def forward(self, x):
 
-        # precompute some HB stuff
-        self.max_SH_iter = -int(np.log(min_budget / max_budget) / np.log(eta)) + 1
-        self.budgets = max_budget * np.power(eta, -np.linspace(self.max_SH_iter - 1, 0,
-                                                               self.max_SH_iter))
+        # switched order of pooling and relu compared to the original example
+        # to make it identical to the keras worker
+        # seems to also give better accuracies
+        x = F.max_pool2d(F.relu(self.conv1(x)), 2)
 
-        self.config.update({
-            'eta': eta,
-            'min_budget': min_budget,
-            'max_budget': max_budget,
-            'budgets': self.budgets,
-            'max_SH_iter': self.max_SH_iter,
-            'min_points_in_model': min_points_in_model,
-            'top_n_percent': top_n_percent,
-            'num_samples': num_samples,
-            'random_fraction': random_fraction,
-            'bandwidth_factor': bandwidth_factor,
-            'min_bandwidth': min_bandwidth
-        })
+        if not self.conv2 is None:
+            x = F.max_pool2d(F.relu(self.conv2(x)), 2)
 
-    def get_next_iteration(self, iteration, iteration_kwargs={}):
-        # number of 'SH rungs'
-        s = self.max_SH_iter - 1
-        # number of configurations in that bracket
-        n0 = int(np.floor((self.max_SH_iter) / (s + 1)) * self.eta ** s)
-        ns = [max(int(n0 * (self.eta ** (-i))), 1) for i in range(s + 1)]
+        if not self.conv3 is None:
+            x = F.max_pool2d(F.relu(self.conv3(x)), 2)
 
-        return (SuccessiveHalving(HPB_iter=iteration, num_configs=ns,
-                                  budgets=self.budgets[(-s - 1):],
-                                  config_sampler=self.config_generator.get_config,
-                                  **iteration_kwargs))
+        x = self.dropout(x)
 
+        x = x.view(-1, self.conv_output_size)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
 
-def get_bohb_interface():
-    addrs = psutil.net_if_addrs()
-    if 'eth0' in addrs.keys():
-        print('FOUND eth0 INTERFACE')
-        return 'eth0'
-    elif 'eno1' in addrs.keys():
-        print('FOUND eno1 INTERFACE')
-        return 'eno1'
-    elif 'ib0' in addrs.keys():
-        print('FOUND ib0 INTERFACE')
-        return 'ib0'
-    elif 'lo0' in addrs.keys():
-        print('FOUND lo0 INTERFACE. Local on Mac')
-        return 'lo0'
-    else:
-        print('FOUND lo INTERFACE')
-        return 'lo'
-
-
-def get_working_dir(run_id):
-    return str(os.path.join(os.getcwd(), "results", run_id))
-
-
-def run_bohb_parallel(id, run_id, bohb_workers, experiment_wrapper):
-    # get bohb params
-    bohb_params = experiment_wrapper.get_bohb_parameters()
-
-    # get suitable interface (eth0 or lo)
-    bohb_interface = get_bohb_interface()
-
-    # get BOHB log directory
-    working_dir = get_working_dir(run_id)
-
-    # every process has to lookup the hostname
-    host = hpns.nic_name_to_host(bohb_interface)
-
-    os.makedirs(working_dir, exist_ok=True)
-    print(f"Id of this one: {id}")
-    if int(id) % 1000 != 0:
-        print('START NEW WORKER')
-        time.sleep(50)
-        w = BohbWorker(host=host,
-                       id=id,
-                       run_id=run_id,
-                       working_dir=working_dir,
-                       experiment_wrapper=experiment_wrapper)
-        w.load_nameserver_credentials(working_directory=working_dir)
-        w.run(background=True)
-        exit(0)
-
-    print('START NEW MASTER')
-    ns = hpns.NameServer(run_id=run_id,
-                         host=host,
-                         port=0,
-                         working_directory=working_dir)
-    ns_host, ns_port = ns.start()
-
-    w = BohbWorker(host=host,
-                   nameserver=ns_host,
-                   nameserver_port=ns_port,
-                   id=id,
-                   run_id=run_id,
-                   working_dir=working_dir,
-                   experiment_wrapper=experiment_wrapper)
-    w.run(background=True)
-
-    result_logger = hpres.json_result_logger(directory=working_dir,
-                                             overwrite=True)
-
-    bohb = BohbWrapper(
-        configspace=experiment_wrapper.get_configspace(),
-        run_id=run_id,
-        eta=bohb_params['eta'],
-        host=host,
-        nameserver=ns_host,
-        nameserver_port=ns_port,
-        min_budget=bohb_params['min_budget'],
-        max_budget=bohb_params['max_budget'],
-        random_fraction=bohb_params['random_fraction'],
-        result_logger=result_logger)
-
-    # res = bohb.run(n_iterations=bohb_params['iterations'])
-    res = bohb.run(n_iterations=bohb_params['iterations'],
-                   min_n_workers=int(bohb_workers))
-
-    bohb.shutdown(shutdown_workers=True)
-    ns.shutdown()
-
-    return res
-
-
-def run_bohb_serial(run_id, experiment_wrapper):
-    # get bohb parameters
-    bohb_params = experiment_wrapper.get_bohb_parameters()
-
-    # get BOHB log directory
-    working_dir = get_working_dir(run_id)
-
-    # assign random port in the 30000-40000 range to avoid using a blocked port because of a previous improper bohb shutdown
-    port = int(30000 + random.random() * 10000)
-
-    ns = hpns.NameServer(run_id=run_id, host="127.0.0.1", port=port)
-    ns.start()
-
-    w = BohbWorker(nameserver="127.0.0.1",
-                   id=0,
-                   run_id=run_id,
-                   nameserver_port=port,
-                   working_dir=working_dir,
-                   experiment_wrapper=experiment_wrapper)
-    w.run(background=True)
-
-    result_logger = hpres.json_result_logger(directory=working_dir,
-                                             overwrite=True)
-
-    bohb = BohbWrapper(
-        configspace=experiment_wrapper.get_configspace(),
-        run_id=run_id,
-        eta=bohb_params['eta'],
-        min_budget=bohb_params['min_budget'],
-        max_budget=bohb_params['max_budget'],
-        random_fraction=bohb_params['random_fraction'],
-        nameserver="127.0.0.1",
-        nameserver_port=port,
-        result_logger=result_logger)
-
-    res = bohb.run(n_iterations=bohb_params['iterations'])
-    bohb.shutdown(shutdown_workers=True)
-    ns.shutdown()
-
-    return res
+    def number_of_parameters(self):
+        return (sum(p.numel() for p in self.parameters() if p.requires_grad))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Example 1 - sequential and local execution.')
-    parser.add_argument('--bohb_id', type=int, help='ID of the Script.', default=0)
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=9)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=243)
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4)
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
+    parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
+    parser.add_argument('--run_id', type=str,
+                        help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
+    parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.')
+    parser.add_argument('--shared_directory', type=str,
+                        help='A directory that is accessible for all processes, e.g. a NFS share.')
 
     args = parser.parse_args()
 
-    print('STARTING EXPERIMENT')
-    run_id='little run'
-    res = run_bohb_parallel(id=args.bohb_id,
-                            bohb_workers=args.n_workers,
-                            run_id=run_id,
-                            experiment_wrapper=ExperimentWrapper())
-    print('FINISHED EXPERIMENT')
+    # Every process has to lookup the hostname
+    host = hpns.nic_name_to_host(args.nic_name)
+
+    if args.worker:
+        time.sleep(5)  # short artificial delay to make sure the nameserver is already running
+        w = PyTorchWorker(run_id=args.run_id, host=host)
+        w.load_nameserver_credentials(working_directory=args.shared_directory)
+        w.run(background=False)
+        exit(0)
+
+    # Start a nameserver:
+    # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
+    NS = hpns.NameServer(run_id=args.run_id, host=host, port=0, working_directory=args.shared_directory)
+    ns_host, ns_port = NS.start()
+
+    # Most optimizers are so computationally inexpensive that we can affort to run a
+    # worker in parallel to it. Note that this one has to run in the background to
+    # not plock!
+    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port)
+    w.run(background=True)
+
+    # Run an optimizer
+    # We now have to specify the host, and the nameserver information
+    bohb = BOHB(configspace=PyTorchWorker.get_configspace(),
+                run_id=args.run_id,
+                host=host,
+                nameserver=ns_host,
+                nameserver_port=ns_port,
+                min_budget=args.min_budget,
+                max_budget=args.max_budget
+                )
+    res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
+
+    # In a cluster environment, you usually want to store the results for later analysis.
+    # One option is to simply pickle the Result object
+    with open(os.path.join(args.shared_directory, 'results.pkl'), 'wb') as fh:
+        pickle.dump(res, fh)
+
+    # Step 4: Shutdown
+    # After the optimizer run, we must shutdown the master and the nameserver.
+    bohb.shutdown(shutdown_workers=True)
+    NS.shutdown()
+
+    id2config = res.get_id2config_mapping()
+    incumbent = res.get_incumbent_id()
+
+    print('Best found configuration:', id2config[incumbent]['config'])
+    print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
+    print('A total of %i runs where executed.' % len(res.get_all_runs()))
+    print('Total budget corresponds to %.1f full function evaluations.' % (
+                sum([r.budget for r in res.get_all_runs()]) / args.max_budget))
