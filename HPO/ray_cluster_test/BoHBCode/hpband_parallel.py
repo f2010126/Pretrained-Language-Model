@@ -186,7 +186,8 @@ if __name__ == "__main__":
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=9)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=243)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4)
-    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
+    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
+    # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
                         help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
@@ -227,7 +228,13 @@ if __name__ == "__main__":
                 min_budget=args.min_budget,
                 max_budget=args.max_budget
                 )
-    res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
+    try:
+        res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
+    except Exception as e:
+        print(e)
+        traceback.print_exc()
+        print('Exiting run due to exception--------------->')
+        sys.exit('My error message. BohB Run Failed')
 
     # In a cluster environment, you usually want to store the results for later analysis.
     # One option is to simply pickle the Result object
