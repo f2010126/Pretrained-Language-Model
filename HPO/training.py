@@ -9,7 +9,7 @@ import time
 import torch
 import yaml
 from yaml import load
-
+import traceback
 try:
     from yaml import CLoader as Loader
 except ImportError:
@@ -31,7 +31,7 @@ def train_model(args, config=None):
     # set up model and experiment
     model = GLUETransformer(
         model_name_or_path=hyperparameters['model_name_or_path'],
-        num_labels=dm.num_labels,
+        num_labels=dm.task_metadata["num_labels"],
         eval_splits=dm.eval_splits,
         task_name=dm.task_name,
         learning_rate=hyperparameters['learning_rate'],
@@ -60,13 +60,18 @@ def train_model(args, config=None):
         max_epochs=hyperparameters['num_train_epochs'],
         accelerator=accelerator,
         devices='auto', strategy='auto',  # Use whatver device is available
-        max_steps=10, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=0,
-        # max_steps=20 and no sanity check
-        val_check_interval=5, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+        max_steps=2, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1, # and no sanity check
+        val_check_interval=1, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
     )
     # train model
     print("Training model")
-    trainer.fit(model, datamodule=dm)
+    try:
+        trainer.fit(model, datamodule=dm)
+    except Exception as e:
+        print("Exception in training: ")
+        print(e)
+        traceback.print_exc()
+
     print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
     # evaluate best model
     trainer.test(model, dataloaders=dm.test_dataloader())
