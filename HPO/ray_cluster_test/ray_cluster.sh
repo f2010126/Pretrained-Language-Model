@@ -32,4 +32,4 @@ python ray_lightning_DefaultTrainer.py --exp-name "clusterSmoke"
 
 ray stop
 
-# python slurm-launch.py --exp-name test-ray --command "python examples/mnist_pytorch_trainable.py" --num-nodes 2 --num-gpus 4 --partition mlhiwidlc_gpu-rtx2080-advanced
+# python bohb-slurm-launch.py --exp-name test-ray --command "python examples/mnist_pytorch_trainable.py" --num-nodes 2 --num-gpus 4 --partition mlhiwidlc_gpu-rtx2080-advanced

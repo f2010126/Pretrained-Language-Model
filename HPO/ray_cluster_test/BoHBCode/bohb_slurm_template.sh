@@ -25,6 +25,8 @@ export NCCL_DEBUG=INFO
 export CUDA_LAUNCH_BLOCKING=1
 source ~/tinybert_nlp/bin/activate
 export TOKENIZERS_PARALLELISM=False
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export TORCH_SHOW_CPP_STACKTRACES=1
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/BoHBCode
 
 echo  'Code will take care of starting the master and workers'
@@ -35,8 +37,8 @@ node_1=${nodes_array[0]}
 
 echo "STARTING HEAD at $node_1"
 srun --nodes=1 --ntasks=1 -w "$node_1" \
---error="/work/dlclarge1/dsengupt-zap_hpo_og/logs/${SLURM_JOB_NAME}_${node_1}.err" \
---output="/work/dlclarge1/dsengupt-zap_hpo_og/logs/${SLURM_JOB_NAME}_${node_1}.out" \
+--error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.err" \
+--output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.out" \
 python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory ./bohb_runs &
 
 echo " Wait 30s before STARTING WORKERS"
@@ -47,8 +49,8 @@ for ((i = 1; i <= worker_num; i++)); do
   node_i=${nodes_array[$i]}
   echo "STARTING WORKER $i at $node_i"
   srun --nodes=1 --ntasks=1 -w "$node_i" \
-  --error="/work/dlclarge1/dsengupt-zap_hpo_og/logs/${SLURM_JOB_NAME}_${node_i}.err" \
-  --output="/work/dlclarge1/dsengupt-zap_hpo_og/logs/${SLURM_JOB_NAME}_${node_i}.out" \
+  --error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.err" \
+  --output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.out" \
   python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0  --shared_directory ./bohb_runs --worker &
   sleep 5
 done

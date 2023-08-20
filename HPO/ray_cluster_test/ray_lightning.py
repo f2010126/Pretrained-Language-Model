@@ -142,7 +142,7 @@ def train_mnist_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         # If fractional GPUs passed in, convert to int. API changed.
-        devices='auto',
+        devices=num_gpus,
         accelerator="auto",
         logger=TensorBoardLogger(
             save_dir=os.getcwd(), name="", version="."),
@@ -175,6 +175,7 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
         parameter_columns=["layer_1_size", "layer_2_size", "lr", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
+    gpus_per_trial=8
     train_fn_with_parameters = tune.with_parameters(train_mnist_tune,
                                                     num_epochs=num_epochs,
                                                     num_gpus=gpus_per_trial,
@@ -198,7 +199,8 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
         ),
         run_config=air.RunConfig(
             name="tune_mnist_asha",
-            progress_reporter=reporter,
+            verbose=2,
+            # progress_reporter=reporter,
         ),
         param_space=config,
     )
@@ -212,4 +214,4 @@ if __name__ == "__main__":
     cpus_available = os.environ.get('SLURM_CPUS_ON_NODE') or 0
 
     # var_heer=ray.init(num_cpus=cpus_available, num_gpus=gpus_available) # so this uese only 1 cpu and n gpu
-    tune_mnist_asha(num_samples=3, num_epochs=2, gpus_per_trial=gpus_available)
+    tune_mnist_asha(num_samples=1, num_epochs=2, gpus_per_trial=gpus_available)

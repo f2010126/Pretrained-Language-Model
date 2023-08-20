@@ -21,9 +21,17 @@ from transformers import (
     GlueDataTrainingArguments,
     TrainingArguments,
 )
+import torch
+import time
+import traceback
+import ray
 
+os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU_NUM'
 
-def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
+class CustomTrainer(Trainer):
+    pass
+
+def tune_transformer(num_samples=8, gpus_per_trial=0, exp_name='', smoke_test=False):
     data_dir_name = "./data" if not smoke_test else "./test_data"
     data_dir = os.path.abspath(os.path.join(os.getcwd(), data_dir_name))
     if not os.path.exists(data_dir):
@@ -33,6 +41,7 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
     model_name = (
         "bert-base-uncased" if not smoke_test else "sshleifer/tiny-distilroberta-base"
     )
+    # Dataset related
     task_name = "rte"
 
     task_data_dir = os.path.join(data_dir, task_name.upper())
@@ -71,7 +80,7 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
     eval_dataset = GlueDataset(
         data_args, tokenizer=tokenizer, mode="dev", cache_dir=task_data_dir
     )
-
+    # Starting args
     training_args = TrainingArguments(
         output_dir=".",
         learning_rate=1e-5,  # config
@@ -89,7 +98,7 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
         weight_decay=0.1,  # config
         logging_dir="./logs",
         skip_memory_metrics=True,
-        report_to="none",
+        report_to="tensorboard",
     )
 
     trainer = Trainer(
@@ -100,13 +109,14 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
         compute_metrics=build_compute_metrics_fn(task_name),
     )
 
+    # Vary This
     tune_config = {
         "per_device_train_batch_size": 32,
         "per_device_eval_batch_size": 32,
         "num_train_epochs": tune.choice([2, 3, 4, 5]),
-        "max_steps": 1 if smoke_test else -1,  # Used for smoke test.
+        "max_steps": 10 if smoke_test else -1,  # Used for smoke test.
     }
-
+    # Change this
     scheduler = PopulationBasedTraining(
         time_attr="training_iteration",
         metric="eval_acc",
@@ -128,23 +138,47 @@ def tune_transformer(num_samples=8, gpus_per_trial=0, smoke_test=False):
         },
         metric_columns=["eval_acc", "eval_loss", "epoch", "training_iteration"],
     )
-
-    trainer.hyperparameter_search(
-        hp_space=lambda _: tune_config,
-        backend="ray",
-        n_trials=num_samples,
-        resources_per_trial={"cpu": 1, "gpu": gpus_per_trial},
-        scheduler=scheduler,
-        checkpoint_config=CheckpointConfig(
-            num_to_keep=1,
-            checkpoint_score_attribute="training_iteration",
-        ),
-        stop={"training_iteration": 1} if smoke_test else None,
-        progress_reporter=reporter,
-        local_dir="./ray_results/",
-        name="tune_transformer_pbt",
-        log_to_file=True,
+    if torch.cuda.is_available():
+        n_devices = torch.cuda.device_count()
+        accelerator = 'gpu'
+        use_gpu = True
+        gpus_per_trial = n_devices
+    else:
+        n_devices = 0
+        accelerator = 'cpu'
+        use_gpu = False
+        gpus_per_trial = 0
+    print(f"Number of devices per trial-----> {gpus_per_trial}")
+    checkpoint_config = CheckpointConfig(
+        num_to_keep=1,
+        checkpoint_score_attribute="training_iteration",
     )
+    try:
+        start = time.time()
+        best_trial = trainer.hyperparameter_search(
+            hp_space=lambda _: tune_config,
+            backend="ray",
+            n_trials=num_samples,
+            resources_per_trial={"cpu": 2, "gpu": gpus_per_trial},
+            scheduler=scheduler,
+            keep_checkpoints_num=1,
+            stop={"eval_acc": .76, } if smoke_test else {"eval_acc": .86, },
+            progress_reporter=reporter,
+            storage_path="./ray_results/",
+            name="tune_transformer_pbt",
+            log_to_file=True,
+            fail_fast="raise",
+        )
+        print(f"Objective: {best_trial.objective} Best trial config: {best_trial.hyperparameters}")
+        end = time.time()
+        hours, rem = divmod(end - start, 3600)
+        minutes, seconds = divmod(rem, 60)
+        print("{:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+    except ray.exceptions.RayTaskError:
+        print("User function raised an exception!")
+    except Exception as e:
+        print("Other error", e)
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":
@@ -152,12 +186,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Finish quickly for testing"
+        "--smoke-test", action="store_false", help="Finish quickly for testing"
     )
+    parser.add_argument("--exp-name", type=str, default="tune_hf")
     args, _ = parser.parse_known_args()
 
     if args.smoke_test:
-        tune_transformer(num_samples=1, gpus_per_trial=0, smoke_test=True)
+        print("Smoke test mode")
+        tune_transformer(num_samples=3, gpus_per_trial=0, smoke_test=False, exp_name=args.exp_name)
     else:
         # You can change the number of GPUs here:
-        tune_transformer(num_samples=8, gpus_per_trial=1)
+        tune_transformer(num_samples=8, gpus_per_trial=2, exp_name=args.exp_name)

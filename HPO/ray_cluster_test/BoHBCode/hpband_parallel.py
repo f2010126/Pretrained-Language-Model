@@ -2,16 +2,28 @@ import logging
 import argparse
 import pickle
 import time
+import sys
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 import random
 from hpbandster.core.worker import Worker
-
+import traceback
 import logging
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
 import os
 from hpbandster.optimizers import BOHB as BOHB
+
+from pytorch_lightning import seed_everything, Trainer
+from data_modules import getDataModule
+from train_module import GLUETransformer
+from pytorch_lightning.loggers import WandbLogger
+import argparse
+import wandb
+import torchmetrics.functional as F
+import time
+import torch
+
 
 try:
     import torch
@@ -35,46 +47,71 @@ class PyTorchWorker(Worker):
         super().__init__(**kwargs)
 
         batch_size = 64
-
-        # Load the Data here
+        print("Data setup?")
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
-        """
-        Simple example for a compute function using a feed forward network.
-        It is trained on the MNIST dataset.
-        The input parameter "config" (dictionary) contains the sampled configurations passed by the bohb optimizer
-        """
-
-        # device = torch.device('cpu')
+        print("budget aka epochs------> {}".format(budget))
         if torch.cuda.is_available():
-            print("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
+            logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
+            n_devices = torch.cuda.device_count()
+            accelerator = 'cpu' if n_devices == 0 else 'auto'
         else:
-            print("CUDA not available, using CPU")
-        time.sleep(5)
-        validation_accuracy = random.uniform(0, 1)
-        test_accuracy = random.uniform(0, 1)
-        train_accuracy = random.uniform(0, 1)
+            logging.debug("CUDA not available, using CPU")
+            accelerator = 'cpu'
+
+        seed_everything(0)
+        # set up data loaders
+        dm = getDataModule(task_name="tyqiangz", model_name_or_path=config['model_name_or_path'],
+                           max_seq_length=config['max_seq_length'],
+                           train_batch_size=config['train_batch_size_gpu'],
+                           eval_batch_size=config['eval_batch_size_gpu'])
+        dm.setup("fit")
+        # set up model and experiment
+        model = GLUETransformer(
+            model_name_or_path=config['model_name_or_path'],
+            num_labels=dm.task_metadata["num_labels"],
+            eval_splits=dm.eval_splits,
+            task_name=dm.task_name,
+            learning_rate=config['learning_rate'],
+            adam_epsilon=1e-8,
+            warmup_steps=0,
+            weight_decay=0.0,
+            train_batch_size=config['train_batch_size_gpu'],
+            eval_batch_size=config['eval_batch_size_gpu'],
+            hyperparameters=config,
+        )
+
+        # set up logger
+
+        # set up trainer
+        trainer = Trainer(
+            max_epochs=int(budget),
+            accelerator=accelerator,
+            devices='auto', strategy='auto',  # Use whatver device is available
+            max_steps=2, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
+            val_check_interval=1, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+        )
+        # train model
+        print("Training model")
+        try:
+            trainer.fit(model, datamodule=dm)
+        except Exception as e:
+            print("Exception in training: ")
+            print(e)
+            traceback.print_exc()
+
+        print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
+        # evaluate best model
+        trainer.test(model, dataloaders=dm.test_dataloader())
+        test_acc = trainer.logged_metrics
+        print(f"Test accuracy: {test_acc}")
+        test_acc=random.random(0,1)
         return ({
-            'loss': 1 - validation_accuracy,  # remember: HpBandSter always minimizes!
-            'info': {'test accuracy': test_accuracy,
-                     'train accuracy': train_accuracy,
-                     'validation accuracy': validation_accuracy,
+            'loss': 1 - test_acc.item(),  # remember: HpBandSter always minimizes!
+            'info': {'all_metrics': trainer.logged_metrics,
                      }
 
         })
-
-    def evaluate_accuracy(self, model, data_loader):
-        model.eval()
-        correct = 0
-        with torch.no_grad():
-            for x, y in data_loader:
-                output = model(x)
-                # test_loss += F.nll_loss(output, target, reduction='sum').item() # sum up batch loss
-                pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
-                correct += pred.eq(y.view_as(pred)).sum().item()
-        # import pdb; pdb.set_trace()
-        accuracy = correct / len(data_loader.sampler)
-        return (accuracy)
 
     @staticmethod
     def get_configspace():
@@ -86,12 +123,12 @@ class PyTorchWorker(Worker):
         """
         cs = CS.ConfigurationSpace()
 
-        lr = CSH.UniformFloatHyperparameter('lr', lower=1e-6, upper=1e-1, default_value='1e-2', log=True)
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-6, upper=1e-1, default_value='1e-2', log=True)
 
         # For demonstration purposes, we add different optimizers as categorical hyperparameters.
         # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
         # SGD has a different parameter 'momentum'.
-        optimizer = CSH.CategoricalHyperparameter('optimizer', ['Adam', 'SGD'])
+        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW','SGD'])
 
         sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, default_value=0.9,
                                                       log=False)
@@ -102,22 +139,16 @@ class PyTorchWorker(Worker):
         # contains 'SGD' as optimizer.
         cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
         cs.add_condition(cond)
+        model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path', ['bert-base-uncased', 'bert-large-uncased'])
+        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, default_value=128, log=True)
+        cs.add_hyperparameters([model_name_or_path, max_seq_length])
 
-        num_conv_layers = CSH.UniformIntegerHyperparameter('num_conv_layers', lower=1, upper=3, default_value=2)
+        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('train_batch_size_gpu', lower=2, upper=8, default_value=4, log=True)
+        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('eval_batch_size_gpu', lower=2, upper=8, default_value=4, log=True)
+        cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
 
-        num_filters_1 = CSH.UniformIntegerHyperparameter('num_filters_1', lower=4, upper=64, default_value=16, log=True)
-        num_filters_2 = CSH.UniformIntegerHyperparameter('num_filters_2', lower=4, upper=64, default_value=16, log=True)
-        num_filters_3 = CSH.UniformIntegerHyperparameter('num_filters_3', lower=4, upper=64, default_value=16, log=True)
-
-        cs.add_hyperparameters([num_conv_layers, num_filters_1, num_filters_2, num_filters_3])
-
-        # You can also use inequality conditions:
-        cond = CS.GreaterThanCondition(num_filters_2, num_conv_layers, 1)
-        cs.add_condition(cond)
-
-        cond = CS.GreaterThanCondition(num_filters_3, num_conv_layers, 2)
-        cs.add_condition(cond)
-
+        scheduler_name = CSH.CategoricalHyperparameter('scheduler_name', ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup'])
+        cs.add_hyperparameters([scheduler_name])
         dropout_rate = CSH.UniformFloatHyperparameter('dropout_rate', lower=0.0, upper=0.9, default_value=0.5,
                                                       log=False)
         num_fc_units = CSH.UniformIntegerHyperparameter('num_fc_units', lower=8, upper=256, default_value=32, log=True)
@@ -127,65 +158,11 @@ class PyTorchWorker(Worker):
         return cs
 
 
-class MNISTConvNet(torch.nn.Module):
-    def __init__(self, num_conv_layers, num_filters_1, num_filters_2, num_filters_3, dropout_rate, num_fc_units,
-                 kernel_size):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(1, num_filters_1, kernel_size=kernel_size)
-        self.conv2 = None
-        self.conv3 = None
-
-        output_size = (28 - kernel_size + 1) // 2
-        num_output_filters = num_filters_1
-
-        if num_conv_layers > 1:
-            self.conv2 = nn.Conv2d(num_filters_1, num_filters_2, kernel_size=kernel_size)
-            num_output_filters = num_filters_2
-            output_size = (output_size - kernel_size + 1) // 2
-
-        if num_conv_layers > 2:
-            self.conv3 = nn.Conv2d(num_filters_2, num_filters_3, kernel_size=kernel_size)
-            num_output_filters = num_filters_3
-            output_size = (output_size - kernel_size + 1) // 2
-
-        self.dropout = nn.Dropout(p=dropout_rate)
-
-        self.conv_output_size = num_output_filters * output_size * output_size
-
-        self.fc1 = nn.Linear(self.conv_output_size, num_fc_units)
-        self.fc2 = nn.Linear(num_fc_units, 10)
-
-    def forward(self, x):
-
-        # switched order of pooling and relu compared to the original example
-        # to make it identical to the keras worker
-        # seems to also give better accuracies
-        x = F.max_pool2d(F.relu(self.conv1(x)), 2)
-
-        if not self.conv2 is None:
-            x = F.max_pool2d(F.relu(self.conv2(x)), 2)
-
-        if not self.conv3 is None:
-            x = F.max_pool2d(F.relu(self.conv3(x)), 2)
-
-        x = self.dropout(x)
-
-        x = x.view(-1, self.conv_output_size)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
-
-    def number_of_parameters(self):
-        return (sum(p.numel() for p in self.parameters() if p.requires_grad))
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Example 1 - sequential and local execution.')
-    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=9)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=243)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4)
+    parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4) # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
     # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')

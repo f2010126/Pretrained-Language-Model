@@ -122,8 +122,8 @@ class LightningMNISTClassifier(pl.LightningModule):
         loss = self.cross_entropy_loss(logits, y)
         acc = self.accuracy(logits, y)
 
-        self.log("ptl/train_loss", loss)
-        self.log("ptl/train_accuracy", acc)
+        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
@@ -133,16 +133,16 @@ class LightningMNISTClassifier(pl.LightningModule):
         accuracy = self.accuracy(logits, y)
         result = {"val_loss": loss, "val_accuracy": accuracy}
         self.val_output_list.append(result)
-        self.log("ptl/val_loss", loss)
-        self.log("ptl/val_accuracy", accuracy)
+        self.log("ptl/val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_accuracy", accuracy, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         return {"val_loss": loss, "val_accuracy": accuracy}
 
     def on_validation_epoch_end(self, ):
         outputs = self.val_output_list
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-        self.log("ptl/val_loss", avg_loss)
-        self.log("ptl/val_accuracy", avg_acc)
+        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
     def on_validation_end(self):
         # last hook that's used by Trainer.
@@ -235,7 +235,7 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
             time_budget_s=750,  # Max time for the whole search
             metric="ptl/val_accuracy",
             mode="max",
-            num_samples=3 if smoke_test else 100,  # Number of times to sample
+            num_samples=30 if smoke_test else 100,  # Number of times to sample
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
             reuse_actors=True,
@@ -278,7 +278,7 @@ def parse_args():
         default=False,
         help="Enables GPU training")
     parser.add_argument(
-        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument(
         "--ray-address",
         help="Address of Ray cluster for seamless distributed execution.")

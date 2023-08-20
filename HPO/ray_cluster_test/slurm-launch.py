@@ -1,6 +1,6 @@
-# slurm-launch.py
+# bohb-slurm-launch.py
 # Usage:
-# python slurm-launch.py --exp-name test \
+# python bohb-slurm-launch.py --exp-name test \
 #     --command "rllib train --run PPO --env CartPole-v0"
 
 import argparse
