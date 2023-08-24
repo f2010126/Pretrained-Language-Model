@@ -54,7 +54,11 @@ class GLUETransformer(LightningModule):
     def forward(self, **inputs):
         return self.model(**inputs)
 
+    def setup(self, stage: str):
+        print(f'Module Set up Local Rank {self.trainer.local_rank} setup out of world_size {self.trainer.world_size}')
+
     def evaluate_step(self, batch, batch_idx, stage='val'):
+        print(f'Local Rank {self.trainer.local_rank} evaluate_step out of world_size {self.trainer.world_size}')
         outputs = self(**batch)
         loss, logits = outputs[:2]
 

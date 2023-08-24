@@ -24,6 +24,7 @@ import torchmetrics.functional as F
 import time
 import torch
 
+from pytorch_lightning.strategies import DDPStrategy
 
 try:
     import torch
@@ -47,7 +48,13 @@ class PyTorchWorker(Worker):
         super().__init__(**kwargs)
 
         batch_size = 64
-        print("Data setup?")
+        print("Data setup? Inside the worker")
+        if torch.cuda.is_available():
+            logging.debug("Inside init of Worker CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
+            n_devices = torch.cuda.device_count()
+            print("n_devices: ", n_devices)
+        else:
+            logging.debug("Inside init of Worker CUDA not available, using CPU")
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
@@ -58,8 +65,10 @@ class PyTorchWorker(Worker):
         else:
             logging.debug("CUDA not available, using CPU")
             accelerator = 'cpu'
+            n_devices = 1
 
         seed_everything(0)
+
         # set up data loaders
         dm = getDataModule(task_name="tyqiangz", model_name_or_path=config['model_name_or_path'],
                            max_seq_length=config['max_seq_length'],
@@ -67,6 +76,7 @@ class PyTorchWorker(Worker):
                            eval_batch_size=config['eval_batch_size_gpu'])
         dm.setup("fit")
         # set up model and experiment
+        logging.debug("Inside compute, before model init after data setup")
         model = GLUETransformer(
             model_name_or_path=config['model_name_or_path'],
             num_labels=dm.task_metadata["num_labels"],
@@ -84,12 +94,21 @@ class PyTorchWorker(Worker):
         # set up logger
 
         # set up trainer
+        # set up trainer
+        logging.debug("Inside compute, before trainer init")
+        n_devices = torch.cuda.device_count()
+        accelerator = 'cpu' if n_devices == 0 else 'auto'
+        ddp = DDPStrategy(process_group_backend="gloo")
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator=accelerator,
-            devices='auto', strategy='auto',  # Use whatver device is available
-            max_steps=2, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
-            val_check_interval=1, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+            num_nodes=n_devices,
+            devices=n_devices,
+            # strategy=ddp,
+            strategy='auto',  # Use whatver device is available
+            max_steps=5, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
+           val_check_interval=1,
+            check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
         )
         # train model
         print("Training model")
@@ -100,14 +119,11 @@ class PyTorchWorker(Worker):
             print(e)
             traceback.print_exc()
 
+        val_acc = trainer.logged_metrics['val_acc_epoch'].item()
         print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
-        # evaluate best model
-        trainer.test(model, dataloaders=dm.test_dataloader())
-        test_acc = trainer.logged_metrics
-        print(f"Test accuracy: {test_acc}")
-        test_acc=random.random(0,1)
+        print(f"Training complete Metrics Epoch Val Acc: {val_acc}")
         return ({
-            'loss': 1 - test_acc.item(),  # remember: HpBandSter always minimizes!
+            'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
             'info': {'all_metrics': trainer.logged_metrics,
                      }
 
@@ -123,7 +139,7 @@ class PyTorchWorker(Worker):
         """
         cs = CS.ConfigurationSpace()
 
-        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-6, upper=1e-1, default_value='1e-2', log=True)
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-5, upper=7e-5, default_value='3e-5', log=True)
 
         # For demonstration purposes, we add different optimizers as categorical hyperparameters.
         # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
@@ -162,7 +178,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4) # no of times to sample??
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=3) # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
     # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
@@ -179,7 +195,7 @@ if __name__ == "__main__":
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = PyTorchWorker(run_id=args.run_id, host=host)
+        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=60)
         w.load_nameserver_credentials(working_directory=args.shared_directory)
         w.run(background=False)
         exit(0)
@@ -192,7 +208,7 @@ if __name__ == "__main__":
     # Most optimizers are so computationally inexpensive that we can affort to run a
     # worker in parallel to it. Note that this one has to run in the background to
     # not plock!
-    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port)
+    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=60)
     w.run(background=True)
 
     # Run an optimizer
@@ -215,7 +231,8 @@ if __name__ == "__main__":
 
     # In a cluster environment, you usually want to store the results for later analysis.
     # One option is to simply pickle the Result object
-    with open(os.path.join(args.shared_directory, 'results.pkl'), 'wb') as fh:
+    savepath= os.path.join(args.shared_directory, args.run_id)
+    with open(os.path.join(savepath, 'results.pkl'), 'wb') as fh:
         pickle.dump(res, fh)
 
     # Step 4: Shutdown
