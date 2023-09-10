@@ -39,7 +39,7 @@ echo "STARTING HEAD at $node_1"
 srun --nodes=1 --ntasks=1 -w "$node_1" \
 --error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.err" \
 --output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.out" \
-python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory ./bohb_runs &
+python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory ./datasetruns
 
 echo " Wait 30s before STARTING WORKERS"
 sleep 30
@@ -51,7 +51,7 @@ for ((i = 1; i <= worker_num; i++)); do
   srun --nodes=1 --ntasks=1 -w "$node_i" \
   --error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.err" \
   --output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.out" \
-  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0  --shared_directory ./bohb_runs --worker &
+  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0  --shared_directory ./datasetruns --worker
   sleep 5
 done
 wait

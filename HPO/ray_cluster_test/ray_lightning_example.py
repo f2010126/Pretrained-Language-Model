@@ -1,4 +1,6 @@
+import math
 
+import torch
 import pytorch_lightning as pl
 from filelock import FileLock
 from torch.utils.data import DataLoader, random_split
@@ -6,19 +8,21 @@ from torch.nn import functional as F
 from torchvision.datasets import MNIST
 from torchvision import transforms
 import os
-import torch
+import ray
+import argparse
 
-# Tuning
+# Ray Tune with Normal PyTorch Lightning
 from pytorch_lightning.loggers import TensorBoardLogger
 from ray import air, tune
 
+from ray.air import session
 from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
+from ray.tune.schedulers import ASHAScheduler, PopulationBasedTraining
 from ray.tune.integration.pytorch_lightning import TuneReportCallback, \
     TuneReportCheckpointCallback
 
 
-# TUNING WITH VANILLA PYTORCH LIGHTNING
+
 class LightningMNISTClassifier(pl.LightningModule):
     """
     This has been adapted from
@@ -39,8 +43,6 @@ class LightningMNISTClassifier(pl.LightningModule):
         self.layer_1 = torch.nn.Linear(28 * 28, self.layer_1_size)
         self.layer_2 = torch.nn.Linear(self.layer_1_size, self.layer_2_size)
         self.layer_3 = torch.nn.Linear(self.layer_2_size, 10)
-
-        self.val_output_list = []
 
     def forward(self, x):
         batch_size, channels, width, height = x.size()
@@ -81,29 +83,19 @@ class LightningMNISTClassifier(pl.LightningModule):
         logits = self.forward(x)
         loss = self.cross_entropy_loss(logits, y)
         accuracy = self.accuracy(logits, y)
-        result = {"val_loss": loss, "val_accuracy": accuracy}
-        self.val_output_list.append(result)
         return {"val_loss": loss, "val_accuracy": accuracy}
 
-    # https://github.com/Lightning-AI/lightning/pull/16520
-    def on_validation_epoch_end(self):
-        outputs = self.val_output_list
+    def validation_epoch_end(self, outputs):
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
         self.log("ptl/val_loss", avg_loss)
         self.log("ptl/val_accuracy", avg_acc)
 
-    # def validation_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-    #     avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-    #     self.log("ptl/val_loss", avg_loss)
-    #     self.log("ptl/val_accuracy", avg_acc)
-
     @staticmethod
     def download_data(data_dir):
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            transforms.Normalize((0.1307, ), (0.3081, ))
         ])
         with FileLock(os.path.expanduser("~/.data.lock")):
             return MNIST(data_dir, train=True, download=True, transform=transform)
@@ -127,26 +119,21 @@ class LightningMNISTClassifier(pl.LightningModule):
 
 def train_mnist(config):
     model = LightningMNISTClassifier(config)
-    trainer = pl.Trainer(max_epochs=5, enable_progress_bar=False)
+    trainer = pl.Trainer(max_epochs=10, enable_progress_bar=False)
 
     trainer.fit(model)
 
 
 def train_mnist_tune(config, num_epochs=10, num_gpus=0, data_dir="~/data"):
-    if torch.cuda.is_available():
-        print(f"No. of GPU available--->{torch.cuda.device_count()}")
-    else:
-        print("No GPU available")
     data_dir = os.path.expanduser(data_dir)
     model = LightningMNISTClassifier(config, data_dir)
     trainer = pl.Trainer(
         max_epochs=num_epochs,
-        # If fractional GPUs passed in, convert to int. API changed.
-        devices=num_gpus,
-        accelerator="auto",
+        # If fractional GPUs passed in, convert to int.
+        gpus=math.ceil(num_gpus),
         logger=TensorBoardLogger(
             save_dir=os.getcwd(), name="", version="."),
-        enable_progress_bar=True,
+        enable_progress_bar=False,
         callbacks=[
             TuneReportCallback(
                 {
@@ -175,20 +162,15 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
         parameter_columns=["layer_1_size", "layer_2_size", "lr", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
 
-    gpus_per_trial=8
     train_fn_with_parameters = tune.with_parameters(train_mnist_tune,
                                                     num_epochs=num_epochs,
                                                     num_gpus=gpus_per_trial,
                                                     data_dir=data_dir)
-    resources_per_trial = {"cpu": 2, "gpu": gpus_per_trial}  # each uses 1 out of all cpus assigned.
+    resources_per_trial = {"cpu": 1, "gpu": gpus_per_trial}
 
-    trainable_obj = tune.with_resources(
-        train_fn_with_parameters,
-        resources=resources_per_trial
-    )
     tuner = tune.Tuner(
         tune.with_resources(
-            trainable=train_fn_with_parameters,
+            train_fn_with_parameters,
             resources=resources_per_trial
         ),
         tune_config=tune.TuneConfig(
@@ -199,8 +181,7 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
         ),
         run_config=air.RunConfig(
             name="tune_mnist_asha",
-            verbose=2,
-            # progress_reporter=reporter,
+            progress_reporter=reporter,
         ),
         param_space=config,
     )
@@ -209,9 +190,41 @@ def tune_mnist_asha(num_samples=10, num_epochs=10, gpus_per_trial=0, data_dir="~
     print("Best hyperparameters found were: ", results.get_best_result().config)
 
 
-if __name__ == "__main__":
-    gpus_available = os.environ.get('SLURM_GPUS_ON_NODE') if torch.cuda.is_available() else 0
-    cpus_available = os.environ.get('SLURM_CPUS_ON_NODE') or 0
+def parse_args():
+    parser = argparse.ArgumentParser(description="Bohb on Slurm")
+    parser.add_argument(
+        "--cuda",
+        action="store_true",
+        default=False,
+        help="Enables GPU training")
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
+    parser.add_argument(
+        "--ray-address",
+        help="Address of Ray cluster for seamless distributed execution.")
+    parser.add_argument(
+        "--server-address",
+        type=str,
+        default=None,
+        required=False,
+        help="The address of server to connect to if using "
+             "Ray Client.")
+    parser.add_argument("--exp-name", type=str, default="tune_bohb")
+    args, _ = parser.parse_known_args()
+    return args
 
-    # var_heer=ray.init(num_cpus=cpus_available, num_gpus=gpus_available) # so this uese only 1 cpu and n gpu
-    tune_mnist_asha(num_samples=1, num_epochs=2, gpus_per_trial=gpus_available)
+if __name__ == "__main__":
+    args = parse_args()
+
+    if args.server_address:
+        context = ray.init(f"ray://{args.server_address}")
+    elif args.ray_address:
+        context = ray.init(address=args.ray_address)
+    elif args.smoke_test:
+        context = ray.init()
+    else:
+        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+
+    print("Dashboard URL: http://{}".format(context.dashboard_url))
+
+    tune_mnist_asha(num_samples=5, num_epochs=3, gpus_per_trial=1, data_dir="~/data")

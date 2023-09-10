@@ -137,10 +137,11 @@ class LightningMNISTClassifier(pl.LightningModule):
 
 def train_mnist_tune(config, num_epochs=10, num_gpus=0):
     pl.seed_everything(0)
-
     data_dir = os.path.abspath("./data")
     model = LightningMNISTClassifier(config, data_dir)
+    # set up data loaders
     dm = DataModuleMNIST()
+    dm.setup("fit")
     metrics = {"loss": "val_loss", "acc": "val_accuracy"}
     n_devices = torch.cuda.device_count()
     accelerator = 'cpu' if n_devices == 0 else 'auto'
@@ -158,29 +159,32 @@ def train_mnist_tune(config, num_epochs=10, num_gpus=0):
     print("Finished training")
 
 
-def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0, exp_name="tune_mnist"):
+def tune_mnist(num_samples=10, num_epochs=10, exp_name="tune_mnist"):
     config = {
         "layer_1": tune.choice([32, 64, 128]),
         "layer_2": tune.choice([64, 128, 256]),
         "lr": tune.loguniform(1e-4, 1e-1),
         "batch_size": tune.choice([32, 64, 128]),
     }
-    metric = "ptl/val_accuracy",
-    mode = "max",
-
     # Static configs that does not change across trials
     dm = DataModuleMNIST()
     # doesn't call prepare data
     logger = TensorBoardLogger(save_dir=os.getcwd(), name="tune-ptl-example", version=".")
     if torch.cuda.is_available():
-        n_devices = torch.cuda.device_count()
         accelerator = 'gpu'
         use_gpu = True
         gpus_per_trial = 2
+        scaling_config = ScalingConfig(
+            # no of other nodes?
+            num_workers=gpus_per_trial, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
+        )
     else:
-        n_devices = 0
         accelerator = 'cpu'
         use_gpu = False
+        scaling_config = ScalingConfig(
+            # no of other nodes?
+            num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+        )
     print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
 
     static_lightning_config = (
@@ -220,10 +224,10 @@ def tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=0, exp_name="tune_m
                               grace_period=1, reduction_factor=2,
                               time_attr="training_iteration")
 
-    scaling_config = ScalingConfig(
-        # no of other nodes?
-        num_workers=2, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": gpus_per_trial}
-    )
+    # as per  the post, this controls 1 Trainer.So I want each trainer to have 2 workers, each with 1 GPU, 2 CPU
+    # Hence, for num_samples trials there's num_samples Trainers, each with 2 workers, each with 1 GPU, 2 CPU.
+    # I have 2 nodes, 2 gpus each.
+    # Result, only 1 trainer runs, uses 2 GPUs.
 
     lightning_trainer = LightningTrainer(
         lightning_config=static_lightning_config,
@@ -318,7 +322,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Tune on local")
     parser.add_argument(
-        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument("--exp-name", type=str, default="tune_mnist")
     args, _ = parser.parse_known_args()
 
@@ -327,6 +331,6 @@ if __name__ == "__main__":
         print("Smoketesting...")
         # train_mnist_tune(config={"layer_1": 32, "layer_2": 64, "lr": 1e-3, "batch_size": 64},
         #                  num_epochs=1, num_gpus=2)
-        tune_mnist(num_samples=10, num_epochs=3, gpus_per_trial=0, exp_name=args.exp_name)
+        tune_mnist(num_samples=2, num_epochs=2, exp_name=args.exp_name)
     else:
-        tune_mnist(num_samples=10, num_epochs=10, gpus_per_trial=8, exp_name=args.exp_name)
+        tune_mnist(num_samples=15, num_epochs=3, exp_name=args.exp_name)

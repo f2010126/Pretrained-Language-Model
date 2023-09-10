@@ -13,9 +13,11 @@ import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
 import os
 from hpbandster.optimizers import BOHB as BOHB
+from hpbandster.core.master import Master
+from hpbandster.core.dispatcher import Job
 
 from pytorch_lightning import seed_everything, Trainer
-from data_modules import getDataModule
+from data_modules import get_datamodule
 from train_module import GLUETransformer
 from pytorch_lightning.loggers import WandbLogger
 import argparse
@@ -25,6 +27,10 @@ import time
 import torch
 
 from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.plugins.environments import LightningEnvironment
+
+# test
+from pytorch_min import SimpleDataset, MyModel
 
 try:
     import torch
@@ -56,12 +62,31 @@ class PyTorchWorker(Worker):
         else:
             logging.debug("Inside init of Worker CUDA not available, using CPU")
 
+    def new_compute(self, config, budget, working_directory,*args, **kwargs):
+        seed_everything(0)
+        model = MyModel()
+        dm = SimpleDataset()
+        trainer = Trainer(max_epochs=3, devices=torch.cuda.device_count())
+        trainer.fit(model, dm)
+        # generate a random number between 0 and 1
+
+
+
+        X = torch.Tensor([[1.0], [51.0], [89.0]])
+        _, y = model(X)
+        print(f"-----> Returning")
+        return ({
+            'loss': 1 - random.random(),  # remember: HpBandSter always minimizes!
+            'info': {'all_metrics': trainer.logged_metrics,
+                     }
+
+        })
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
         if torch.cuda.is_available():
             logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
             n_devices = torch.cuda.device_count()
-            accelerator = 'cpu' if n_devices == 0 else 'auto'
+            accelerator = 'cpu' if n_devices == 0 else 'cuda'
         else:
             logging.debug("CUDA not available, using CPU")
             accelerator = 'cpu'
@@ -70,10 +95,9 @@ class PyTorchWorker(Worker):
         seed_everything(0)
 
         # set up data loaders
-        dm = getDataModule(task_name="tyqiangz", model_name_or_path=config['model_name_or_path'],
-                           max_seq_length=config['max_seq_length'],
-                           train_batch_size=config['train_batch_size_gpu'],
-                           eval_batch_size=config['eval_batch_size_gpu'])
+        dm = get_datamodule(task_name="tyqiangz", model_name_or_path=config['model_name_or_path'],
+                            max_seq_length=config['max_seq_length'], train_batch_size=config['train_batch_size_gpu'],
+                            eval_batch_size=config['eval_batch_size_gpu'])
         dm.setup("fit")
         # set up model and experiment
         logging.debug("Inside compute, before model init after data setup")
@@ -98,20 +122,20 @@ class PyTorchWorker(Worker):
         logging.debug("Inside compute, before trainer init")
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
-        ddp = DDPStrategy(process_group_backend="gloo")
+        ddp = DDPStrategy(process_group_backend="nccl")
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator=accelerator,
-            num_nodes=n_devices,
+            num_nodes=1, # you. IDIOT. you forgot to set this to 1
             devices=n_devices,
             # strategy=ddp,
             strategy='auto',  # Use whatver device is available
-            max_steps=5, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
-           val_check_interval=1,
-            check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+            # max_steps=5, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
+           #val_check_interval=1,
+         check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
         )
         # train model
-        print("Training model")
+        print(f"Training model From PID {os.getgid()}")
         try:
             trainer.fit(model, datamodule=dm)
         except Exception as e:
@@ -120,8 +144,9 @@ class PyTorchWorker(Worker):
             traceback.print_exc()
 
         val_acc = trainer.logged_metrics['val_acc_epoch'].item()
-        print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
-        print(f"Training complete Metrics Epoch Val Acc: {val_acc}")
+        print(f"From PID {os.getgid()}  Best checkpoint path: { trainer.checkpoint_callback.best_model_path}")
+        print(f" From PID {os.getgid()} Training complete Metrics Epoch Val Acc: {val_acc}")
+
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
             'info': {'all_metrics': trainer.logged_metrics,
@@ -159,8 +184,8 @@ class PyTorchWorker(Worker):
         max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, default_value=128, log=True)
         cs.add_hyperparameters([model_name_or_path, max_seq_length])
 
-        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('train_batch_size_gpu', lower=2, upper=8, default_value=4, log=True)
-        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('eval_batch_size_gpu', lower=2, upper=8, default_value=4, log=True)
+        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('train_batch_size_gpu', lower=2, upper=3, default_value=2, log=True)
+        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('eval_batch_size_gpu', lower=2, upper=3, default_value=2, log=True)
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
 
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name', ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup'])
@@ -177,9 +202,9 @@ class PyTorchWorker(Worker):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=3) # no of times to sample??
-    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=3)
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4) # no of times to sample??
+    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
     # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
@@ -195,7 +220,7 @@ if __name__ == "__main__":
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=60)
+        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=6000)
         w.load_nameserver_credentials(working_directory=args.shared_directory)
         w.run(background=False)
         exit(0)
@@ -208,7 +233,7 @@ if __name__ == "__main__":
     # Most optimizers are so computationally inexpensive that we can affort to run a
     # worker in parallel to it. Note that this one has to run in the background to
     # not plock!
-    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=60)
+    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
     w.run(background=True)
 
     # Run an optimizer

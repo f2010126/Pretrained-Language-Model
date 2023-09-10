@@ -4,13 +4,10 @@ from ray import air, tune
 import pytorch_lightning as pl
 import torch
 from ray import tune
-from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
 from torch.nn import functional as F
 from ray.air.config import RunConfig, ScalingConfig, CheckpointConfig
 import traceback
-import torchmetrics
-import evaluate
+
 from torch.utils.data import random_split, DataLoader
 from torchmetrics import Accuracy
 from torchvision import datasets, transforms
@@ -23,7 +20,7 @@ from ray.tune import CLIReporter
 from ray.train.lightning import LightningConfigBuilder, LightningTrainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from ray.tune import Callback
-from typing import List, Optional
+from typing import List
 # local changes
 import socket
 
@@ -33,9 +30,10 @@ class MyCallback(Callback):
         print(f"Got result: {result['ptl/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
 
     def on_trial_error(
-        self, iteration: int, trials: List["Trial"], trial: "Trial", **info
+            self, iteration: int, trials: List["Trial"], trial: "Trial", **info
     ):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
+
 
 class DataModuleMNIST(pl.LightningDataModule):
     def __init__(self):
@@ -73,120 +71,94 @@ class DataModuleMNIST(pl.LightningDataModule):
         return DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
 
 
-class GLUETransformer(pl.LightningModule):
-    def __init__(
-            self,
-            model_name_or_path: str,
-            num_labels: int,
-            task_name: str,
-            learning_rate: float = 2e-5,
-            adam_epsilon: float = 1e-8,
-            warmup_steps: int = 0,
-            weight_decay: float = 0.0,
-            train_batch_size: int = 32,
-            eval_batch_size: int = 32,
-            eval_splits: Optional[list] = None,
-            optimizer_name: str = "AdamW",
-            scheduler_name: str = "linear",
-            hyperparameters: Optional[dict] = None,
-            **kwargs,
-    ):
-        super().__init__()
-        # access validation outputs, save them in-memory as instance attributes
-        self.validation_step_outputs = []
+class LightningMNISTClassifier(pl.LightningModule):
+    def __init__(self, config, data_dir=None):
+        super(LightningMNISTClassifier, self).__init__()
+        self.data_dir = data_dir or os.getcwd()
+        self.lr = config["lr"]
+        layer_1, layer_2 = config["layer_1"], config["layer_2"]
+        # mnist images are (1, 28, 28) (channels, width, height)
+        self.layer_1 = torch.nn.Linear(28 * 28, layer_1)
+        self.layer_2 = torch.nn.Linear(layer_1, layer_2)
+        self.layer_3 = torch.nn.Linear(layer_2, 10)
+        self.accuracy = Accuracy(task="multiclass", num_classes=10)
 
-        self.task = 'binary' if num_labels == 2 else 'multiclass'
-        self.hyperparams = hyperparameters
+        self.val_output_list = []
 
-        self.save_hyperparameters()
-        self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
+    def cross_entropy_loss(self, logits, labels):
+        return F.nll_loss(logits, labels)
 
-        self.config = AutoConfig.from_pretrained(hyperparameters['model_name_or_path'], num_labels=num_labels)
-        self.model = AutoModelForSequenceClassification.from_pretrained(hyperparameters['model_name_or_path'], config=self.config)
-        # self.metric = evaluate.load(
-        #     "glue", self.hparams.task_name, experiment_id=datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-        # )
-        self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
-        self.optimizer_name = hyperparameters['optimizer_name']
-        self.scheduler_name = hyperparameters['scheduler_name']
-        self.train_acc = evaluate.load( 'accuracy')
-        self.train_f1 = evaluate.load( 'f1')
-        self.train_bal_acc=evaluate.load( 'hyperml/balanced_accuracy')
+    def accuracy(self, logits, labels):
+        _, predicted = torch.max(logits.data, 1)
+        correct = (predicted == labels).sum().item()
+        accuracy = correct / len(labels)
+        return torch.tensor(accuracy)
 
-        self.prepare_data_per_node = True
+    def forward(self, x):
+        batch_size, channels, width, height = x.size()
+        x = x.view(batch_size, -1)
+        x = self.layer_1(x)
+        x = torch.relu(x)
+        x = self.layer_2(x)
+        x = torch.relu(x)
+        x = self.layer_3(x)
+        x = torch.log_softmax(x, dim=1)
+        return x
 
-    def forward(self, **inputs):
-        return self.model(**inputs)
-
-    def evaluate_step(self, batch, batch_idx, stage='val'):
-        outputs = self(**batch)
-        loss, logits = outputs[:2]
-
-        if self.hparams.num_labels > 1:
-            preds = torch.argmax(logits, axis=1)
-        elif self.hparams.num_labels == 1:
-            preds = logits.squeeze()
-        pass
-
-        # calculate pred
-        labels = batch["labels"]
-
-        acc = self.accuracy(preds, labels)
-        print(f'-----> {stage}_acc_step', acc)
-        self.log(f'{stage}_acc', acc, prog_bar=True, sync_dist=True, on_step=True)
-        self.log(f'{stage}_loss', loss, prog_bar=True, sync_dist=True, on_step=True)
-        return loss
-
-    def training_step(self, batch, batch_idx):
-        return self.evaluate_step(batch, batch_idx, stage='train')
-
-    def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
-        return self.evaluate_step(batch, batch_idx, stage='val')
-
-    def test_step(self, batch, batch_idx, dataloader_idx=0):
-        return self.evaluate_step(batch, batch_idx, stage='test')
+    def on_fit_start(self):
+        print("Running in IP ---> ", socket.gethostbyname(socket.gethostname()))
+        if torch.cuda.is_available():
+            print(f"GPU is available {torch.cuda.device_count()}")
+        else:
+            print("GPU is not available")
 
     def configure_optimizers(self):
-        """Prepare optimizer and schedule (linear warmup and decay)"""
-        model = self.model
-        no_decay = ["bias", "LayerNorm.weight"]
-        optimizer_grouped_parameters = [
-            {
-                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                "weight_decay": self.hparams.weight_decay,
-            },
-            {
-                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
 
-        if self.optimizer_name == "AdamW":
-            optimizer = AdamW(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'],
-                              eps=self.hparams.adam_epsilon)
-        elif self.optimizer_name == "Adam":
-            optimizer = Adam(optimizer_grouped_parameters, lr=self.hyperparams['learning_rate'], eps=self.hparams.adam_epsilon)
+    def training_step(self, train_batch, batch_idx):
+        x, y = train_batch
+        logits = self.forward(x)
+        loss = self.cross_entropy_loss(logits, y)
+        acc = self.accuracy(logits, y)
 
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=self.hparams.warmup_steps,
-            num_training_steps=self.trainer.estimated_stepping_batches,
-        )
-        scheduler = {"scheduler": scheduler, "interval": "step", "frequency": 1}
-        print(f'Load the optimizer {self.optimizer_name} and scheduler {self.scheduler_name}')
-        return [optimizer], [scheduler]
+        self.log("ptl/train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/train_accuracy", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        return loss
+
+    def validation_step(self, val_batch, batch_idx):
+        x, y = val_batch
+        logits = self.forward(x)
+        loss = self.cross_entropy_loss(logits, y)
+        accuracy = self.accuracy(logits, y)
+        result = {"val_loss": loss, "val_accuracy": accuracy}
+        self.val_output_list.append(result)
+        self.log("ptl/val_loss", loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_accuracy", accuracy, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
+        return {"val_loss": loss, "val_accuracy": accuracy}
+
+    def on_validation_epoch_end(self, ):
+        outputs = self.val_output_list
+        avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
+        avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
+        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+    def on_validation_end(self):
+        # last hook that's used by Trainer.
+        print(f"---------- Finished validation?---->{self.trainer.logged_metrics}")
 
 
 # BOHB LOOP
 def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
-
     # Static configs that does not change across trials
+    # Details:
+    print(f'Running this on {ray._private.services.get_node_ip_address()}')
     dm = DataModuleMNIST()
     # doesn't call prepare data
-    logger = TensorBoardLogger(save_dir=os.getcwd(), name="tune-ptl-example", version=".")
+    logger = TensorBoardLogger(save_dir=f'./ray_results/{exp_name}', name="tensorboard_files", version=".")
     if torch.cuda.is_available():
         n_devices = torch.cuda.device_count()
-        accelerator = 'gpu'
+        accelerator = 'cuda'
         use_gpu = True
         gpus_per_trial = 8
     else:
@@ -195,7 +167,7 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
         use_gpu = False
     print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
 
-    num_epochs = 10 if smoke_test else 100
+    num_epochs = 10 if smoke_test else 9
     static_lightning_config = (
         LightningConfigBuilder()
         .module(cls=LightningMNISTClassifier)
@@ -227,13 +199,14 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
         ),
     )
 
-    max_iterations = 5 if smoke_test else 100  # each trial will stop after 5 iterations max
+    max_iterations = 5 if smoke_test else 20  # each trial will stop after 5 iterations max
     # scheduler
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
-        max_t=max_iterations, # max time per trial? max length of time a trial
-        reduction_factor=2, # cut down trials by factor of?
-        stop_last_trials=True, #Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
+        max_t=max_iterations,  # max time per trial? max length of time a trial
+        reduction_factor=2,  # cut down trials by factor of?
+        stop_last_trials=True,
+        # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
     )
 
     # search Algo
@@ -260,10 +233,10 @@ def air_bohb(smoke_test=False, gpus_per_trial=0, exp_name='bohb_mnist'):
         lightning_trainer,
         param_space={"lightning_config": searchable_lightning_config},
         tune_config=tune.TuneConfig(
-            time_budget_s=750, # Max time for the whole search
+            time_budget_s=7500,  # Max time for the whole search
             metric="ptl/val_accuracy",
             mode="max",
-            num_samples=3 if smoke_test else 100, # Number of times to sample
+            num_samples=10 if smoke_test else 15,  # Number of times to sample from the config space
             scheduler=bohb_hyperband,
             search_alg=bohb_search,
             reuse_actors=True,
@@ -306,7 +279,7 @@ def parse_args():
         default=False,
         help="Enables GPU training")
     parser.add_argument(
-        "--smoke-test", action="store_false", help="Finish quickly for testing") # store_false will default to True
+        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument(
         "--ray-address",
         help="Address of Ray cluster for seamless distributed execution.")
@@ -348,3 +321,5 @@ if __name__ == "__main__":
 
     else:
         air_bohb(smoke_test=args.smoke_test, gpus_per_trial=0, exp_name=args.exp_name)
+
+    print("END")
