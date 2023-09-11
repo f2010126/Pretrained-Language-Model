@@ -8,6 +8,7 @@ import pandas as pd
 from pathlib import Path
 from datasets import DatasetDict
 from typing import List, Optional, Dict
+from filelock import FileLock
 
 class GLUEDataModule(LightningDataModule):
     task_text_field_map = {
@@ -291,7 +292,7 @@ class DataModule(LightningDataModule):
         try:
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
         except:
-            print("File not exist")
+            print("Setup Data File not exist")
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
 
@@ -369,7 +370,7 @@ class AmazonMultiReview(DataModule):
     def prepare_data(self):
 
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("File not exist")
+            print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
             dataset = dataset.map(self.clean_data, batched=True)
@@ -386,8 +387,10 @@ class AmazonMultiReview(DataModule):
 
             # save the tokenized data to disk
             try:
-                Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+
             except:
                 print("File already exist")
 
@@ -440,7 +443,7 @@ class TyqiangzData(DataModule):
         # download, split tokenise data and save to disk
 
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("File not exist")
+            print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             dataset = datasets.load_dataset(self.task_name, 'german')
             dataset = dataset.rename_column("label", "labels")
@@ -457,8 +460,9 @@ class TyqiangzData(DataModule):
 
             # save the tokenized data to disk
             try:
-                Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
             except:
                 print("File already exist")
 
@@ -545,8 +549,9 @@ class OmpData(DataModule):
 
             # save the tokenized data to disk
             try:
-                Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
             except:
                 print("File already exist")
 
@@ -604,7 +609,7 @@ class SentiLexData(DataModule):
     def prepare_data(self):
 
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("File not exist")
+            print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
             dataset = datasets.load_dataset(self.task_name, 'de', split='train').shuffle(seed=42)
@@ -628,8 +633,9 @@ class SentiLexData(DataModule):
 
             # save the tokenized data to disk
             try:
-                Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
             except:
                 print("File already exist")
 
@@ -684,7 +690,7 @@ class CardiffMultiSentiment(DataModule):
     def prepare_data(self):
 
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("File not exist")
+            print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
             dataset = datasets.load_dataset(self.task_name, 'german').shuffle(seed=42)
@@ -700,9 +706,9 @@ class CardiffMultiSentiment(DataModule):
 
             # save the tokenized data to disk
             try:
-
-                Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
             except:
                 print("File already exist")
 
