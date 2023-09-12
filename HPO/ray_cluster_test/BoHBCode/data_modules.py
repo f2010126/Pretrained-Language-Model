@@ -304,20 +304,20 @@ class DataModule(LightningDataModule):
         return self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True, padding="max_length")
 
     def train_dataloader(self):
-        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=self.n_cpu)
+        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=self.n_cpu, pin_memory=True)
 
     def val_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
+            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True) for x in
                     self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True) for x in
                     self.eval_splits]
 
 
