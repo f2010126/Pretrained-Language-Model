@@ -716,6 +716,84 @@ class CardiffMultiSentiment(DataModule):
             print("File exist. Load Tokenized data in setup.")
 
 
+class MtopDomain(DataModule):
+    task_metadata = {
+        "num_labels": 11,
+        "label_col": "labels",
+        "tokenize_folder_name": "mtop_domain",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            model_name_or_path: str,
+            task_name: str = "mteb/mtop_domain",
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            encode_columns=None,
+            data_dir='./data',
+            **kwargs,
+    ):
+
+        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
+                         task_name=task_name,data_dir=data_dir)
+        if encode_columns is None:
+            encode_columns = ['text']
+
+        self.label_column = label_column
+        self.encode_columns = encode_columns
+        self.num_labels = self.task_metadata['num_labels']
+
+
+    def clean_data(self, example):
+        # rename/ combine columns
+        example['sentence'] = example['word']
+        example['labels'] = example['sentiment']
+        return example
+
+    def prepare_data(self):
+
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data File not exist")
+            print(f'Download and Tokenise')
+            # load a shuffled version of the dataset
+            dataset = datasets.load_dataset(self.task_name, 'de')
+            dataset = dataset.rename_column("label", "labels")
+            dataset = dataset.rename_column("text", "sentence")
+            dataset = dataset.map(self.encode_batch, batched=True)
+            for split in dataset.keys():
+                remove_features = set(dataset[split].features) ^ set(
+                    [self.label_column] + ["input_ids", "attention_mask"])
+                dataset[split] = dataset[split].remove_columns(remove_features)
+                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
+                dataset[split].set_format(type="torch", columns=columns)
+
+            # save the tokenized data to disk
+            try:
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+            except:
+                print("File already exist")
+
+        else:
+            print("File exist in Prepare Data. Load Tokenized data in setup.")
+
+
+
+
 def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                    max_seq_length: int = 128, train_batch_size: int = 32,
                    eval_batch_size: int = 32, data_dir='./data'):
@@ -750,6 +828,11 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                                      train_batch_size=train_batch_size,
                                      eval_batch_size=eval_batch_size,
                                      data_dir=data_dir )
+    elif task_name == "mtop_domain":
+        return MtopDomain(model_name_or_path=model_name_or_path,
+                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                                 eval_batch_size=eval_batch_size,
+                                 data_dir=data_dir)
     else:
         print("Task not found")
         raise NotImplementedError
@@ -758,7 +841,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
     data_dir=os.path.join(os.getcwd(), "testing_data")
-    dm = get_datamodule(task_name="cardiff_multi_sentiment", model_name_or_path="distilbert-base-uncased", max_seq_length=156,
+    dm = get_datamodule(task_name="mtop_domain", model_name_or_path="distilbert-base-uncased", max_seq_length=156,
                         train_batch_size=32, eval_batch_size=32,data_dir=data_dir)
     dm.prepare_data()
     dm.setup("fit")
