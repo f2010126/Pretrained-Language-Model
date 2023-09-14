@@ -2,6 +2,8 @@ from pytorch_lightning import seed_everything, Trainer
 from datamodule_glue import GLUEDataModule, GlueModule, getDataModule
 from GlueLightningModule import GLUETransformer
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.strategies import DDPStrategy
+
 import argparse
 import wandb
 import torchmetrics.functional as F
@@ -55,18 +57,23 @@ def train_model(args, config=None):
     # set up trainer
     n_devices = torch.cuda.device_count()
     accelerator = 'cpu' if n_devices == 0 else 'auto'
+    ddp = DDPStrategy(process_group_backend="gloo")
     trainer = Trainer(
         logger=wandb_logger,
         max_epochs=hyperparameters['num_train_epochs'],
         accelerator=accelerator,
-        devices='auto', strategy='auto',  # Use whatver device is available
+        devices='auto',  # Use whatver device is available
         max_steps=2, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1, # and no sanity check
-        val_check_interval=1, check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+        val_check_interval=1, # check post each train batch
+        check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+        strategy=ddp,
+        #strategy='auto',
     )
     # train model
     print("Training model")
     try:
         trainer.fit(model, datamodule=dm)
+        print(f"Training complete Metrics Epoch Val Acc: {trainer.logged_metrics['val_acc_epoch'].item()}")
     except Exception as e:
         print("Exception in training: ")
         print(e)
@@ -74,9 +81,7 @@ def train_model(args, config=None):
 
     print("Best checkpoint path: ", trainer.checkpoint_callback.best_model_path)
     # evaluate best model
-    trainer.test(model, dataloaders=dm.test_dataloader())
-    test_acc = trainer.logged_metrics
-    print(f"Test accuracy: {test_acc}")
+
     wandb.finish()
 
 
@@ -144,7 +149,7 @@ def parse_args():
                         default=42,
                         type=int,
                         help="Seed used for training and evaluation.")
-    parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="HPO")
+    parser.add_argument("--project_name", type=str, help="Name of WANDDB project.", default="HPO-Training-Func")
     parser.add_argument("--group_name", type=str, help="Name of WANDDB group.", default="Amazon")  # Dataset name
     parser.add_argument("--run_name", type=str, help="Name of WANDDB run.",
                         default="Bert-Adapter-Training")  # shoudld be model name

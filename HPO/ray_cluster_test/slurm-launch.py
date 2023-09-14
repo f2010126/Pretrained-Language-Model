@@ -108,4 +108,4 @@ if __name__ == "__main__":
         )
     )
     print("You can check the status of your job by 'squeue -u <username>'.")
-    # sys.exit(0)
+    sys.exit(0)

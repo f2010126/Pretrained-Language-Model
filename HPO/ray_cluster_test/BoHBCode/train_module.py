@@ -179,6 +179,7 @@ class AshaTransformer(LightningModule):
         labels = batch["labels"]
 
         acc = self.accuracy(preds, labels)
+
         self.log(f'{stage}_acc', acc, prog_bar=True, sync_dist=True, on_step=True)
         self.log(f'{stage}_loss', loss, prog_bar=True, sync_dist=True, on_step=True)
         return {f"loss": loss, f"accuracy": acc}
