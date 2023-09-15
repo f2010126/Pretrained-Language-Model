@@ -10,6 +10,7 @@ from datasets import DatasetDict
 from typing import List, Optional, Dict
 from filelock import FileLock
 import re
+import logging
 
 class GLUEDataModule(LightningDataModule):
     task_text_field_map = {
@@ -295,17 +296,18 @@ class DataModule(LightningDataModule):
         raise NotImplementedError
 
     def setup(self, stage: str):
-        print('Setup data in directory: ', self.dir_path)
+        logging.debug(f'Setup data in directory: {self.dir_path}')
         # load data here
         try:
+            logging.debug(f"Check Data File exists -----> {self.dir_path}/{self.tokenised_file}")
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
         except:
-            print("Setup Data File not exist")
+            logging.debug("Setup Data File not exist")
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
 
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
-        print('dataset loaded')
+        logging.debug('dataset loaded')
 
     def encode_batch(self, batch):
         """Encodes a batch of input data using the model tokenizer."""
@@ -838,13 +840,6 @@ class GermEval2018Coarse(DataModule):
         self.encode_columns = encode_columns
         self.num_labels = self.task_metadata['num_labels']
 
-
-    def clean_data(self, example):
-        # rename/ combine columns
-        example['sentence'] = example['word']
-        example['labels'] = example['sentiment']
-        return example
-
     def prepare_data(self):
 
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
@@ -852,8 +847,14 @@ class GermEval2018Coarse(DataModule):
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
             dataset = datasets.load_dataset(self.task_name)
-            dataset = dataset.rename_column("label", "labels")
+            dataset=dataset.class_encode_column("coarse-grained")
+            dataset = dataset.rename_column("coarse-grained", "labels")
             dataset = dataset.rename_column("text", "sentence")
+            train_testvalid = dataset['train'].train_test_split(test_size=0.3)
+            dataset = DatasetDict({
+                'train': train_testvalid['train'],
+                'test': train_testvalid['test'],
+                'validation': dataset['test']})
             dataset = dataset.map(self.encode_batch, batched=True)
             for split in dataset.keys():
                 remove_features = set(dataset[split].features) ^ set(
