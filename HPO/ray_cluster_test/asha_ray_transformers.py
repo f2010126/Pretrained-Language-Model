@@ -250,28 +250,43 @@ def debug_torch(num_samples=10, num_epochs=10, exp_name="debug_torch"):
 
     result_dir = os.path.join(os.getcwd(), "ray_results_result")
     print(f"result_dir-----> {result_dir}")
-    tuner = tune.Tuner(ray_trainer,
-                       tune_config=tune.TuneConfig(
-                           metric="ptl/val_accuracy",
-                           mode="max",
-                           scheduler=scheduler,
-                           num_samples=num_samples,
-                           trial_name_creator=trial_dir_name,
-                           trial_dirname_creator=trial_dir_name,
-                       ),
-                       run_config=ray.train.RunConfig(
-                           name=exp_name,
-                           verbose=2,
-                           storage_path=result_dir,
-                           log_to_file=True,
-                           checkpoint_config=ray.train.CheckpointConfig(
-                               num_to_keep=3,
-                               checkpoint_score_attribute="ptl/val_accuracy",
-                               checkpoint_score_order="max",
+    # Fault Tolerance Code
+    storage_path = os.path.expanduser("~/ray_results")
+    exp_name = "tune_fault_tolerance_guide"
+    restore_path = os.path.join(result_dir, exp_name)
+
+    if tune.Tuner.can_restore(restore_path):
+        tuner = tune.Tuner.restore(restore_path,
+                                   trainable=ray_trainer,
+                                   resume_unfinished=True,
+                                   resume_errored=True,
+                                   restart_errored=False,
+                                   param_space={"train_loop_config": hpo_config},
+                                   )
+    else:
+        tuner = tune.Tuner(ray_trainer,
+                           tune_config=tune.TuneConfig(
+                               metric="ptl/val_accuracy",
+                               mode="max",
+                               scheduler=scheduler,
+                               num_samples=num_samples,
+                               trial_name_creator=trial_dir_name,
+                               trial_dirname_creator=trial_dir_name,
                            ),
-                       ),
-                       param_space={"train_loop_config": hpo_config},
-                       )
+                           run_config=ray.train.RunConfig(
+                               name=exp_name,
+                               verbose=2,
+                               storage_path=result_dir,
+                               log_to_file=True,
+                               checkpoint_config=ray.train.CheckpointConfig(
+                                   num_to_keep=3,
+                                   checkpoint_score_attribute="ptl/val_accuracy",
+                                   checkpoint_score_order="max",
+                               ),
+                           ),
+                           param_space={"train_loop_config": hpo_config},
+                           )
+
     results = tuner.fit()
 
     print("Best hyperparameters found were: ", results.get_best_result().config)
