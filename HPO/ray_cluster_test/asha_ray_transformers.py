@@ -174,7 +174,8 @@ def tune_func_torch_trainer(num_samples=10, num_epochs=10, exp_name="torch_trans
         )
     # A `RunConfig` was passed to both the `Tuner` and the `TorchTrainer`.
     # The run config passed to the `Tuner` is the one that will be used
-    train_fn_with_parameters = tune.with_parameters(objective_torch_trainer, data_dir=os.path.join(os.getcwd(), "testing_data"))
+    train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
+                                                    data_dir=os.path.join(os.getcwd(), "testing_data"))
     ray_trainer = TorchTrainer(
         train_fn_with_parameters,
         scaling_config=scaling_config,
@@ -218,6 +219,65 @@ def tune_func_torch_trainer(num_samples=10, num_epochs=10, exp_name="torch_trans
 
 
 def debug_torch(num_samples=10, num_epochs=10, exp_name="debug_torch"):
+    scheduler = ASHAScheduler(max_t=num_epochs,
+                              grace_period=1,
+                              reduction_factor=2)
+
+    accelerator = 'gpu'
+    use_gpu = True
+    gpus_per_worker = 4
+    # each Trainer gets that.
+    scaling_config = ray.train.ScalingConfig(
+        # no of other nodes?
+        num_workers=gpus_per_worker, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
+    )
+
+    # A `RunConfig` was passed to both the `Tuner` and the `TorchTrainer`.
+    # The run config passed to the `Tuner` is the one that will be used
+    train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
+                                                    data_dir=os.path.join(os.getcwd(), "debug_testing_data"))
+    ray_trainer = TorchTrainer(
+        train_fn_with_parameters,
+        scaling_config=scaling_config,
+        run_config=ray.train.RunConfig(
+            checkpoint_config=ray.train.CheckpointConfig(
+                num_to_keep=3,
+                checkpoint_score_attribute="ptl/val_accuracy",
+                checkpoint_score_order="max",
+            ),
+        )
+    )
+
+    result_dir = os.path.join(os.getcwd(), "ray_results_result")
+    print(f"result_dir-----> {result_dir}")
+    tuner = tune.Tuner(ray_trainer,
+                       tune_config=tune.TuneConfig(
+                           metric="ptl/val_accuracy",
+                           mode="max",
+                           scheduler=scheduler,
+                           num_samples=num_samples,
+                           trial_name_creator=trial_dir_name,
+                           trial_dirname_creator=trial_dir_name,
+                       ),
+                       run_config=ray.train.RunConfig(
+                           name=exp_name,
+                           verbose=2,
+                           storage_path=result_dir,
+                           log_to_file=True,
+                           checkpoint_config=ray.train.CheckpointConfig(
+                               num_to_keep=3,
+                               checkpoint_score_attribute="ptl/val_accuracy",
+                               checkpoint_score_order="max",
+                           ),
+                       ),
+                       param_space={"train_loop_config": hpo_config},
+                       )
+    results = tuner.fit()
+
+    print("Best hyperparameters found were: ", results.get_best_result().config)
+
+
+def debug_bohb(num_samples=10, num_epochs=10, exp_name="debug_bohb"):
     scheduler = ASHAScheduler(max_t=num_epochs,
                               grace_period=1,
                               reduction_factor=2)
