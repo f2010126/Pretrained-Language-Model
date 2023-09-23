@@ -93,8 +93,6 @@ def objective_torch_trainer(config, data_dir=os.path.join(os.getcwd(), "tokenise
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
         val_check_interval=0.5,  # check validation set 4 times during a training epoch
-        limit_train_batches=5,
-        limit_val_batches=5,
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback])
@@ -126,13 +124,6 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
     ray_trainer = TorchTrainer(
         train_fn_with_parameters,
         scaling_config=scaling_config,
-        run_config=ray.train.RunConfig(
-            checkpoint_config=ray.train.CheckpointConfig(
-                num_to_keep=3,
-                checkpoint_score_attribute="ptl/val_accuracy",
-                checkpoint_score_order="max",
-            ),
-        )
     )
 
     result_dir = os.path.join(os.getcwd(), "ray_results_result")
@@ -154,7 +145,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
         # space=config_space,  # If you want to set the space manually
     )
     # Number of parallel runs allowed
-    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=6)
 
     if tune.Tuner.can_restore(restore_path):
         tuner = tune.Tuner.restore(restore_path,
@@ -253,7 +244,8 @@ if __name__ == "__main__":
 
     if args.smoke_test:
         print("Running smoke test")
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=5,
+        args.exp_name = args.exp_name + "_smoke"
+        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=2,
                            exp_name=args.exp_name)
     else:
         torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
