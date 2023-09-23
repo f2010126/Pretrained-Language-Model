@@ -21,15 +21,11 @@ from ray.tune import Callback
 from ray.tune.experiment import Trial
 from ray.tune.integration.pytorch_lightning import TuneReportCallback
 from ray.tune.schedulers import ASHAScheduler
+from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
+from ray.tune.search.bohb import TuneBOHB
 import logging
 import sys
 
-# Ray Train report callback
-from ray import train
-import tempfile
-import shutil
-from ray._private.usage.usage_lib import TagKey, record_extra_usage_tag
-from ray.train import Checkpoint
 # local imports
 try:
     from BoHBCode.data_modules import OmpData, get_datamodule
@@ -39,6 +35,7 @@ except ImportError:
     from .BoHBCode.train_module import AshaTransformer
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
+
 class MyCallback(Callback):
     def on_trial_result(self, iteration, trials, trial, result, **info):
         print(f"Got result: {result['ptl/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
@@ -47,42 +44,42 @@ class MyCallback(Callback):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
 
 
-class RayTrainReportCallback(Callback):
-    """A simple callback that reports checkpoints to Ray on train epoch end."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.trial_name = train.get_context().get_trial_name()
-        self.local_rank = train.get_context().get_local_rank()
-        self.tmpdir_prefix = os.path.join(tempfile.gettempdir(), self.trial_name)
-        if os.path.isdir(self.tmpdir_prefix) and self.local_rank == 0:
-            shutil.rmtree(self.tmpdir_prefix)
-
-        record_extra_usage_tag(TagKey.TRAIN_LIGHTNING_RAYTRAINREPORTCALLBACK, "1")
-
-    def on_train_epoch_end(self, trainer, pl_module) -> None:
-        # Creates a checkpoint dir with fixed name
-        tmpdir = os.path.join(self.tmpdir_prefix, str(trainer.current_epoch))
-        os.makedirs(tmpdir, exist_ok=True)
-
-        # Fetch metrics
-        metrics = trainer.callback_metrics
-        metrics = {k: v.item() for k, v in metrics.items()}
-
-        # (Optional) Add customized metrics
-        metrics["epoch"] = trainer.current_epoch
-        metrics["step"] = trainer.global_step
-
-        # Save checkpoint to local
-        ckpt_path = os.path.join(tmpdir, "checkpoint.ckpt")
-        trainer.save_checkpoint(ckpt_path, weights_only=False)
-
-        # Report to train session
-        checkpoint = Checkpoint.from_directory(tmpdir)
-        train.report(metrics=metrics, checkpoint=checkpoint)
-
-        if self.local_rank == 0:
-            shutil.rmtree(tmpdir)
+# class RayTrainReportCallback(Callback):
+#     """A simple callback that reports checkpoints to Ray on train epoch end."""
+#
+#     def __init__(self) -> None:
+#         super().__init__()
+#         self.trial_name = train.get_context().get_trial_name()
+#         self.local_rank = train.get_context().get_local_rank()
+#         self.tmpdir_prefix = os.path.join(tempfile.gettempdir(), self.trial_name)
+#         if os.path.isdir(self.tmpdir_prefix) and self.local_rank == 0:
+#             shutil.rmtree(self.tmpdir_prefix)
+#
+#         record_extra_usage_tag(TagKey.TRAIN_LIGHTNING_RAYTRAINREPORTCALLBACK, "1")
+#
+#     def on_train_epoch_end(self, trainer, pl_module) -> None:
+#         # Creates a checkpoint dir with fixed name
+#         tmpdir = os.path.join(self.tmpdir_prefix, str(trainer.current_epoch))
+#         os.makedirs(tmpdir, exist_ok=True)
+#
+#         # Fetch metrics
+#         metrics = trainer.callback_metrics
+#         metrics = {k: v.item() for k, v in metrics.items()}
+#
+#         # (Optional) Add customized metrics
+#         metrics["epoch"] = trainer.current_epoch
+#         metrics["step"] = trainer.global_step
+#
+#         # Save checkpoint to local
+#         ckpt_path = os.path.join(tmpdir, "checkpoint.ckpt")
+#         trainer.save_checkpoint(ckpt_path, weights_only=False)
+#
+#         # Report to train session
+#         checkpoint = Checkpoint.from_directory(tmpdir)
+#         train.report(metrics=metrics, checkpoint=checkpoint)
+#
+#         if self.local_rank == 0:
+#             shutil.rmtree(tmpdir)
 
 hpo_config = {
     'model_name_or_path': tune.choice(["bert-base-uncased", "bert-base-multilingual-cased",
@@ -134,6 +131,8 @@ def objective_torch_trainer(config, data_dir=os.path.join(os.getcwd(), "testing_
         enable_progress_bar=True,
         max_time="00:12:00:00",  # give each run a time limit
         val_check_interval=0.5,  # check validation set 4 times during a training epoch
+        limit_train_batches=5,
+        limit_val_batches=5,
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback])
@@ -223,14 +222,22 @@ def debug_torch(num_samples=10, num_epochs=10, exp_name="debug_torch"):
                               grace_period=1,
                               reduction_factor=2)
 
-    accelerator = 'gpu'
-    use_gpu = True
-    gpus_per_worker = 4
-    # each Trainer gets that.
-    scaling_config = ray.train.ScalingConfig(
-        # no of other nodes?
-        num_workers=gpus_per_worker, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
-    )
+    if torch.cuda.is_available():
+        accelerator = 'gpu'
+        use_gpu = True
+        gpus_per_worker = 4
+        # each Trainer gets that.
+        scaling_config = ray.train.ScalingConfig(
+            # no of other nodes?
+            num_workers=gpus_per_worker, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
+        )
+    else:
+        accelerator = 'cpu'
+        use_gpu = False
+        scaling_config = ray.train.ScalingConfig(
+            # no of other nodes?
+            num_workers=5, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+        )
 
     # A `RunConfig` was passed to both the `Tuner` and the `TorchTrainer`.
     # The run config passed to the `Tuner` is the one that will be used
@@ -293,9 +300,22 @@ def debug_torch(num_samples=10, num_epochs=10, exp_name="debug_torch"):
 
 
 def debug_bohb(num_samples=10, num_epochs=10, exp_name="debug_bohb"):
-    scheduler = ASHAScheduler(max_t=num_epochs,
-                              grace_period=1,
-                              reduction_factor=2)
+    max_iterations = 3
+    # scheduler
+    bohb_hyperband = HyperBandForBOHB(
+        time_attr="training_iteration",
+        max_t=max_iterations,  # max time per trial? max length of time a trial
+        reduction_factor=2,  # cut down trials by factor of?
+        stop_last_trials=True,
+        # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
+    )
+
+    # search Algo
+    bohb_search = TuneBOHB(
+        # space=config_space,  # If you want to set the space manually
+    )
+    # Number of parallel runs allowed
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=4)
 
     if torch.cuda.is_available():
         accelerator = 'gpu'
@@ -330,29 +350,43 @@ def debug_bohb(num_samples=10, num_epochs=10, exp_name="debug_bohb"):
     )
 
     result_dir = os.path.join(os.getcwd(), "ray_results_result")
+    # Fault Tolerance Code
+    exp_name = "bohb_tune_fault_tolerance_guide"
+    restore_path = os.path.join(result_dir, exp_name)
     print(f"result_dir-----> {result_dir}")
-    tuner = tune.Tuner(ray_trainer,
-                       tune_config=tune.TuneConfig(
-                           metric="ptl/val_accuracy",
-                           mode="max",
-                           scheduler=scheduler,
-                           num_samples=num_samples,
-                           trial_name_creator=trial_dir_name,
-                           trial_dirname_creator=trial_dir_name,
-                       ),
-                       run_config=ray.train.RunConfig(
-                           name=exp_name,
-                           verbose=2,
-                           storage_path=result_dir,
-                           log_to_file=True,
-                           checkpoint_config=ray.train.CheckpointConfig(
-                               num_to_keep=3,
-                               checkpoint_score_attribute="ptl/val_accuracy",
-                               checkpoint_score_order="max",
+    if tune.Tuner.can_restore(restore_path):
+        tuner = tune.Tuner.restore(restore_path,
+                                   trainable=ray_trainer,
+                                   resume_unfinished=True,
+                                   resume_errored=True,
+                                   restart_errored=False,
+                                   param_space={"train_loop_config": hpo_config},
+                                   )
+    else:
+        tuner = tune.Tuner(ray_trainer,
+                           tune_config=tune.TuneConfig(
+                               metric="ptl/val_accuracy",
+                               mode="max",
+                               scheduler=bohb_hyperband,
+                               search_alg=bohb_search,
+                               reuse_actors=False,
+                               num_samples=num_samples,
+                               # trial_name_creator=trial_dir_name,
+                               # trial_dirname_creator=trial_dir_name,
                            ),
-                       ),
-                       param_space={"train_loop_config": hpo_config},
-                       )
+                           run_config=ray.train.RunConfig(
+                               name=exp_name,
+                               verbose=2,
+                               storage_path=result_dir,
+                               log_to_file=True,
+                               checkpoint_config=ray.train.CheckpointConfig(
+                                   num_to_keep=3,
+                                   checkpoint_score_attribute="ptl/val_accuracy",
+                                   checkpoint_score_order="max",
+                               ),
+                           ),
+                           param_space={"train_loop_config": hpo_config},
+                           )
     results = tuner.fit()
 
     print("Best hyperparameters found were: ", results.get_best_result().config)

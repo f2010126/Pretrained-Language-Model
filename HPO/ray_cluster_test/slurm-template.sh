@@ -8,7 +8,7 @@ ${PARTITION_OPTION}
 ${GIVEN_NODE}
 ### This script works for any number of nodes, Ray will find and manage all resources
 #SBATCH --nodes=${NUM_NODES}
-## #SBATCH --exclusive
+#SBATCH --exclusive
 #SBATCH --cpus-per-task=20
 ### Give all resources to a single Ray task, ray can manage the resources internally
 #SBATCH --ntasks-per-node=1
@@ -20,19 +20,18 @@ ${GIVEN_NODE}
 #SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}.out
 #SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}.error
 
-#SBATCH --time=0:50:00
+#SBATCH --time=04:10:00
 
 # Load modules or your own conda environment here
 # module load pytorch/v1.4.0-gpu
 # conda activate ${CONDA_ENV}
 echo "Activate environment for Job ID $SLURM_JOB_ID"
-echo  "Print Environment Variables"
-printenv
+
 
 export NCCL_DEBUG=INFO
 export CUDA_LAUNCH_BLOCKING=1
-source ~/tinybert_nlp/bin/activate
 export TOKENIZERS_PARALLELISM=False
+source ~/tinybert_nlp/bin/activate
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test
 
 # ===== DO NOT CHANGE THINGS HERE UNLESS YOU KNOW WHAT YOU ARE DOING =====
