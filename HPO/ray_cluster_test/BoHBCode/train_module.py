@@ -7,9 +7,9 @@ import torchmetrics
 import evaluate
 from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
-from .data_modules import DataModule, get_datamodule
 
 
+import logging
 class GLUETransformer(LightningModule):
     def __init__(
             self,
@@ -156,6 +156,11 @@ class AshaTransformer(LightningModule):
 
         self.prepare_data_per_node = True
 
+        if torch.cuda.is_available():
+            print(f"GPU available: {torch.cuda.device_count()}")
+        else:
+            print("No GPU available on LightningModule")
+
     # Training
     def forward(self, **inputs):
         return self.model(**inputs)
@@ -193,6 +198,7 @@ class AshaTransformer(LightningModule):
         return result
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
+        logging.debug("test_step--->")
         return self.evaluate_step(batch, batch_idx, stage='test')
 
     def on_validation_epoch_end(self):
@@ -202,11 +208,12 @@ class AshaTransformer(LightningModule):
 
         self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
         self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        logging.debug("on_validation_epoch_end--->")
         return {"loss": avg_loss, "acc": avg_acc}
 
     def on_validation_end(self):
         # last hook that's used by Trainer.
-        pass
+        logging.debug("on_validation_end")
 
     # Optimizers
     def configure_optimizers(self):

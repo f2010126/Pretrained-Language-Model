@@ -17,9 +17,7 @@ from hpbandster.core.master import Master
 from hpbandster.core.dispatcher import Job
 
 from pytorch_lightning import seed_everything, Trainer
-from data_modules import get_datamodule
-from train_module import GLUETransformer
-from pytorch_lightning.loggers import WandbLogger
+
 import argparse
 import wandb
 import torchmetrics.functional as F
@@ -27,7 +25,6 @@ import time
 import torch
 
 from pytorch_lightning.strategies import DDPStrategy
-from pytorch_lightning.plugins.environments import LightningEnvironment
 
 # test
 from pytorch_min import SimpleDataset, MyModel
@@ -40,11 +37,19 @@ try:
 except ImportError:
     raise ImportError("For this example you need to install pytorch.")
 
+# local imports
+import sys
+sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_test/BoHBCode")
+
 try:
-    import torchvision
-    import torchvision.transforms as transforms
+    from data_modules import get_datamodule
+    from train_module import AshaTransformer,GLUETransformer
+    from asha_ray_transformers import trial_dir_name
 except ImportError:
-    raise ImportError("For this example you need to install pytorch-vision.")
+    from data_modules import get_datamodule
+    from train_module import AshaTransformer, GLUETransformer
+
+
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -93,11 +98,13 @@ class PyTorchWorker(Worker):
             n_devices = 1
 
         seed_everything(0)
+        data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
 
         # set up data loaders
-        dm = get_datamodule(task_name="tyqiangz", model_name_or_path=config['model_name_or_path'],
-                            max_seq_length=config['max_seq_length'], train_batch_size=config['train_batch_size_gpu'],
-                            eval_batch_size=config['eval_batch_size_gpu'])
+        dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
+                        max_seq_length=config['max_seq_length'],
+                        train_batch_size=config['per_device_train_batch_size'],
+                        eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
         dm.setup("fit")
         # set up model and experiment
         logging.debug("Inside compute, before model init after data setup")
@@ -110,8 +117,8 @@ class PyTorchWorker(Worker):
             adam_epsilon=1e-8,
             warmup_steps=0,
             weight_decay=0.0,
-            train_batch_size=config['train_batch_size_gpu'],
-            eval_batch_size=config['eval_batch_size_gpu'],
+            train_batch_size=config['per_device_train_batch_size'],
+            eval_batch_size=config['per_device_eval_batch_size'],
             hyperparameters=config,
         )
 
@@ -128,11 +135,13 @@ class PyTorchWorker(Worker):
             accelerator=accelerator,
             num_nodes=1, # you. IDIOT. you forgot to set this to 1
             devices=n_devices,
-            # strategy=ddp,
-            strategy='auto',  # Use whatver device is available
-            # max_steps=5, limit_val_batches=5, limit_test_batches=5, num_sanity_val_steps=1,  # and no sanity check
-           #val_check_interval=1,
-         check_val_every_n_epoch=1,  # check_val_every_n_epoch=1 and every 5 batches
+            #strategy=ddp,
+            strategy="ddp_spawn",
+            limit_train_batches=5,
+            limit_val_batches=5,
+            limit_test_batches=5, num_sanity_val_steps=1,
+            log_every_n_steps=1,
+            val_check_interval=1,
         )
         # train model
         print(f"Training model From PID {os.getgid()}")
@@ -142,6 +151,9 @@ class PyTorchWorker(Worker):
             print("Exception in training: ")
             print(e)
             traceback.print_exc()
+
+        # print metrics
+        print(f'Metrics------>{trainer.logged_metrics}')
 
         val_acc = trainer.logged_metrics['val_acc_epoch'].item()
         print(f"From PID {os.getgid()}  Best checkpoint path: { trainer.checkpoint_callback.best_model_path}")
@@ -184,8 +196,8 @@ class PyTorchWorker(Worker):
         max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, default_value=128, log=True)
         cs.add_hyperparameters([model_name_or_path, max_seq_length])
 
-        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('train_batch_size_gpu', lower=2, upper=3, default_value=2, log=True)
-        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('eval_batch_size_gpu', lower=2, upper=3, default_value=2, log=True)
+        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3, default_value=2, log=True)
+        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3, default_value=2, log=True)
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
 
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name', ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup'])
@@ -218,6 +230,9 @@ if __name__ == "__main__":
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
 
+    # make the shared directory
+    os.makedirs(args.shared_directory, exist_ok=True)
+
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(run_id=args.run_id, host=host, timeout=6000)
@@ -233,8 +248,9 @@ if __name__ == "__main__":
     # Most optimizers are so computationally inexpensive that we can affort to run a
     # worker in parallel to it. Note that this one has to run in the background to
     # not plock!
-    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
-    w.run(background=True)
+    # comment out for now.
+    # w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
+    # w.run(background=True)
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information

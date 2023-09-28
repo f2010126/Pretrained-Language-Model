@@ -23,10 +23,10 @@ echo  "Print Environment Variables"
 
 export NCCL_DEBUG=INFO
 export CUDA_LAUNCH_BLOCKING=1
-source ~/tinybert_nlp/bin/activate
 export TOKENIZERS_PARALLELISM=False
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export TORCH_SHOW_CPP_STACKTRACES=1
+source ~/tinybert_nlp/bin/activate
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/BoHBCode
 
 echo  'Code will take care of starting the master and workers'
