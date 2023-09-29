@@ -1,4 +1,4 @@
-from pytorch_lightning import LightningModule, seed_everything
+from pytorch_lightning import LightningModule
 from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
 from typing import Optional
 import torch
@@ -8,8 +8,9 @@ import evaluate
 from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 
-
 import logging
+
+
 class GLUETransformer(LightningModule):
     def __init__(
             self,
@@ -131,12 +132,13 @@ class AshaTransformer(LightningModule):
             **kwargs,
     ):
         super().__init__()
-        seed_everything(config['seed'])
+
         # access validation outputs, save them in-memory as instance attributes
         self.validation_step_outputs = []
 
         self.task = 'binary' if num_labels == 2 else 'multiclass'
         self.config = config
+        print(f"config----->: {config}")
 
         self.save_hyperparameters()
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
@@ -206,8 +208,8 @@ class AshaTransformer(LightningModule):
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
 
-        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
-        self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True,sync_dist=True)
+        self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         logging.debug("on_validation_epoch_end--->")
         return {"loss": avg_loss, "acc": avg_acc}
 
@@ -252,5 +254,3 @@ class AshaTransformer(LightningModule):
         return [optimizer], [scheduler]
 
     # data
-
-

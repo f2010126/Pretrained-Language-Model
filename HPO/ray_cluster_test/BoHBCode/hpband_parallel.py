@@ -17,17 +17,18 @@ from hpbandster.core.master import Master
 from hpbandster.core.dispatcher import Job
 
 from pytorch_lightning import seed_everything, Trainer
-
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+# local changes
+import logging
+import multiprocessing
+logger = multiprocessing.log_to_stderr()
 import argparse
-import wandb
-import torchmetrics.functional as F
+
 import time
 import torch
 
 from pytorch_lightning.strategies import DDPStrategy
 
-# test
-from pytorch_min import SimpleDataset, MyModel
 
 try:
     import torch
@@ -39,109 +40,63 @@ except ImportError:
 
 # local imports
 import sys
+
 sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_test/BoHBCode")
 
 try:
     from data_modules import get_datamodule
-    from train_module import AshaTransformer,GLUETransformer
+    from train_module import AshaTransformer, GLUETransformer
     from asha_ray_transformers import trial_dir_name
 except ImportError:
     from data_modules import get_datamodule
     from train_module import AshaTransformer, GLUETransformer
 
 
-
-logging.basicConfig(level=logging.DEBUG)
-
-
 class PyTorchWorker(Worker):
-    def __init__(self, N_train=8192, N_valid=1024, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        batch_size = 64
-        print("Data setup? Inside the worker")
-        if torch.cuda.is_available():
-            logging.debug("Inside init of Worker CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
-            n_devices = torch.cuda.device_count()
-            print("n_devices: ", n_devices)
-        else:
-            logging.debug("Inside init of Worker CUDA not available, using CPU")
 
-    def new_compute(self, config, budget, working_directory,*args, **kwargs):
-        seed_everything(0)
-        model = MyModel()
-        dm = SimpleDataset()
-        trainer = Trainer(max_epochs=3, devices=torch.cuda.device_count())
-        trainer.fit(model, dm)
-        # generate a random number between 0 and 1
-
-
-
-        X = torch.Tensor([[1.0], [51.0], [89.0]])
-        _, y = model(X)
-        print(f"-----> Returning")
-        return ({
-            'loss': 1 - random.random(),  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': trainer.logged_metrics,
-                     }
-
-        })
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
         if torch.cuda.is_available():
             logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
             n_devices = torch.cuda.device_count()
-            accelerator = 'cpu' if n_devices == 0 else 'cuda'
         else:
             logging.debug("CUDA not available, using CPU")
-            accelerator = 'cpu'
             n_devices = 1
 
         seed_everything(0)
         data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
 
-        # set up data loaders
+        # set up data and model
         dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
-                        max_seq_length=config['max_seq_length'],
-                        train_batch_size=config['per_device_train_batch_size'],
-                        eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
+                            max_seq_length=config['max_seq_length'],
+                            train_batch_size=config['per_device_train_batch_size'],
+                            eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
         dm.setup("fit")
-        # set up model and experiment
-        logging.debug("Inside compute, before model init after data setup")
-        model = GLUETransformer(
-            model_name_or_path=config['model_name_or_path'],
-            num_labels=dm.task_metadata["num_labels"],
-            eval_splits=dm.eval_splits,
-            task_name=dm.task_name,
-            learning_rate=config['learning_rate'],
-            adam_epsilon=1e-8,
-            warmup_steps=0,
-            weight_decay=0.0,
-            train_batch_size=config['per_device_train_batch_size'],
-            eval_batch_size=config['per_device_eval_batch_size'],
-            hyperparameters=config,
-        )
-
-        # set up logger
-
-        # set up trainer
-        # set up trainer
-        logging.debug("Inside compute, before trainer init")
+        model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
-        ddp = DDPStrategy(process_group_backend="nccl")
+        log_dir = os.path.join(os.getcwd(), "bohb_runs/torch_trainer_logs")
+        # make the shared directory
+        os.makedirs(log_dir, exist_ok=True)
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator=accelerator,
-            num_nodes=1, # you. IDIOT. you forgot to set this to 1
+            num_nodes=1,  # you. IDIOT. you forgot to set this to 1
             devices=n_devices,
-            #strategy=ddp,
+            # strategy=ddp,
             strategy="ddp_spawn",
-            limit_train_batches=5,
-            limit_val_batches=5,
-            limit_test_batches=5, num_sanity_val_steps=1,
-            log_every_n_steps=1,
-            val_check_interval=1,
+            logger=[CSVLogger(save_dir=log_dir, name="csv_torch_trainer_logs", version="."),
+                    TensorBoardLogger(save_dir=log_dir, name="tensorboard_torch_trainer_logs", version=".")],
+            max_time="00:1:00:00",  # give each run a time limit
+
+            limit_train_batches=15,
+            limit_val_batches=15,
+            limit_test_batches=15, num_sanity_val_steps=1,
+            log_every_n_steps=5,
+            val_check_interval=5,
         )
         # train model
         print(f"Training model From PID {os.getgid()}")
@@ -153,10 +108,10 @@ class PyTorchWorker(Worker):
             traceback.print_exc()
 
         # print metrics
-        print(f'Metrics------>{trainer.logged_metrics}')
+        print(f'Metrics------>{trainer.callback_metrics}')
 
-        val_acc = trainer.logged_metrics['val_acc_epoch'].item()
-        print(f"From PID {os.getgid()}  Best checkpoint path: { trainer.checkpoint_callback.best_model_path}")
+        val_acc = trainer.callback_metrics['val_acc_epoch'].item()
+        print(f"From PID {os.getgid()}  Best checkpoint path: {trainer.checkpoint_callback.best_model_path}")
         print(f" From PID {os.getgid()} Training complete Metrics Epoch Val Acc: {val_acc}")
 
         return ({
@@ -175,16 +130,41 @@ class PyTorchWorker(Worker):
         :return: ConfigurationsSpace-Object
         """
         cs = CS.ConfigurationSpace()
+        """
+        hpo_config = {
+    'model_name_or_path': tune.choice(["bert-base-uncased", "bert-base-multilingual-cased",
+                                       "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
+                                       "dvm1983/TinyBERT_General_4L_312D_de",
+                                       "linhd-postdata/alberti-bert-base-multilingual-cased",
+                                       "dbmdz/distilbert-base-german-europeana-cased", ]),
 
-        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-5, upper=7e-5, default_value='3e-5', log=True)
+    'optimizer_name': tune.choice(["AdamW", "Adam"]),
+    'scheduler_name': tune.choice(["linear", "cosine", "cosine_with_restarts", "polynomial", "constant"]),
+    'learning_rate': tune.loguniform(1e-5, 6e-5),
+    'weight_decay': tune.loguniform(1e-5, 1e-3),
+    'adam_epsilon': tune.loguniform(1e-8, 1e-6),
+    'warmup_steps': tune.choice([0, 100, 1000]),
+    'per_device_train_batch_size': tune.choice([2]),
+    'per_device_eval_batch_size': tune.choice([2, ]),
+    'gradient_accumulation_steps': tune.choice([1, 2, 4]),
+    'num_train_epochs': tune.choice([2, 3, 4]),--> Budget
+    'max_steps': tune.choice([-1, 100, 1000]),
+    'max_grad_norm': tune.choice([0.0, 1.0, 2.0]),
+    'seed': tune.choice([42, 1234, 2021]),
+    'max_seq_length': tune.choice([128, 256, 512]),
+    "num_epochs": tune.choice([2, 3, 4]),
+    "gradient_clip_algorithm": tune.choice(["norm", "value"]),
+}
+        """
+
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-5, upper=7e-5, log=True)
 
         # For demonstration purposes, we add different optimizers as categorical hyperparameters.
         # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
         # SGD has a different parameter 'momentum'.
-        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW','SGD'])
+        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD'])
 
-        sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, default_value=0.9,
-                                                      log=False)
+        sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
 
         cs.add_hyperparameters([lr, optimizer, sgd_momentum])
 
@@ -192,22 +172,36 @@ class PyTorchWorker(Worker):
         # contains 'SGD' as optimizer.
         cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
         cs.add_condition(cond)
-        model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path', ['bert-base-uncased', 'bert-large-uncased'])
-        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, default_value=128, log=True)
-        cs.add_hyperparameters([model_name_or_path, max_seq_length])
+        model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
+                                                           ["bert-base-uncased", "bert-base-multilingual-cased",
+                                       "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
+                                       "dvm1983/TinyBERT_General_4L_312D_de",
+                                       "linhd-postdata/alberti-bert-base-multilingual-cased",
+                                       "dbmdz/distilbert-base-german-europeana-cased"])
+        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, log=True)
 
-        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3, default_value=2, log=True)
-        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3, default_value=2, log=True)
+        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3,
+                                                                log=True)
+        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3,
+                                                               log=True)
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
 
-        scheduler_name = CSH.CategoricalHyperparameter('scheduler_name', ['linear', 'cosine', 'cosine_with_restarts', 'polynomial', 'constant', 'constant_with_warmup'])
-        cs.add_hyperparameters([scheduler_name])
-        dropout_rate = CSH.UniformFloatHyperparameter('dropout_rate', lower=0.0, upper=0.9, default_value=0.5,
-                                                      log=False)
-        num_fc_units = CSH.UniformIntegerHyperparameter('num_fc_units', lower=8, upper=256, default_value=32, log=True)
+        scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
+                                                       ['linear', 'cosine', 'cosine_with_restarts', 'polynomial',
+                                                        'constant', 'constant_with_warmup'])
+        cs.add_hyperparameters([model_name_or_path, max_seq_length, scheduler_name])
 
-        cs.add_hyperparameters([dropout_rate, num_fc_units])
+        weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
+        warmup_steps = CSH.UniformIntegerHyperparameter('warmup_steps', lower=10, upper=1000, log=True)
+        cs.add_hyperparameters([weight_decay, warmup_steps])
 
+        adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
+        gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=1, upper=4,
+                                                                          log=True)
+        max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
+        gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
+
+        cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps, max_grad_norm, gradient_clip_algorithm])
         return cs
 
 
@@ -215,12 +209,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=3)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=4) # no of times to sample??
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
+                        default=4)  # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
     # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
-                        help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.')
+                        help='A unique run id for this optimization run. An easy option is to use the job id of the '
+                             'clusters scheduler.')
     parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.')
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.')
@@ -231,7 +227,7 @@ if __name__ == "__main__":
     host = hpns.nic_name_to_host(args.nic_name)
 
     # make the shared directory
-    os.makedirs(args.shared_directory, exist_ok=True)
+    os.makedirs(os.path.join(os.getcwd(),args.shared_directory), exist_ok=True)
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
@@ -249,8 +245,8 @@ if __name__ == "__main__":
     # worker in parallel to it. Note that this one has to run in the background to
     # not plock!
     # comment out for now.
-    # w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
-    # w.run(background=True)
+    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
+    w.run(background=True)
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
@@ -264,6 +260,10 @@ if __name__ == "__main__":
                 )
     try:
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
+        id2config = res.get_id2config_mapping()
+        incumbent = res.get_incumbent_id()
+        print('Best found configuration:', id2config[incumbent]['config'])
+
     except Exception as e:
         print(e)
         traceback.print_exc()
@@ -272,8 +272,8 @@ if __name__ == "__main__":
 
     # In a cluster environment, you usually want to store the results for later analysis.
     # One option is to simply pickle the Result object
-    savepath= os.path.join(args.shared_directory, args.run_id)
-    with open(os.path.join(savepath, 'results.pkl'), 'wb') as fh:
+    savepath = os.path.join(os.getcwd(),args.shared_directory)
+    with open(os.path.join(savepath, f'{args.run_id}_results.pkl'), 'wb') as fh:
         pickle.dump(res, fh)
 
     # Step 4: Shutdown
@@ -288,4 +288,4 @@ if __name__ == "__main__":
     print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
     print('A total of %i runs where executed.' % len(res.get_all_runs()))
     print('Total budget corresponds to %.1f full function evaluations.' % (
-                sum([r.budget for r in res.get_all_runs()]) / args.max_budget))
+            sum([r.budget for r in res.get_all_runs()]) / args.max_budget))

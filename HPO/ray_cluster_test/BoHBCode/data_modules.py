@@ -299,10 +299,9 @@ class DataModule(LightningDataModule):
         logging.debug(f'Setup data in directory: {self.dir_path}')
         # load data here
         try:
-            logging.debug(f"Check Data File exists -----> {self.dir_path}/{self.tokenised_file}")
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
         except:
-            logging.debug("Setup Data File not exist")
+            logging.debug("The tokenised data file not exist")
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
 
