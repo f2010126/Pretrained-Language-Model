@@ -17,7 +17,6 @@ NUM_GPUS_PER_NODE = "${NUM_GPUS_PER_NODE}"
 PARTITION_OPTION = "${PARTITION_OPTION}"
 GIVEN_NODE = "${GIVEN_NODE}"
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -34,7 +33,7 @@ if __name__ == "__main__":
         "-w",
         type=str,
         help="The specified nodes to use. Same format as the "
-        "return of 'sinfo'. Default: ''.",
+             "return of 'sinfo'. Default: ''.",
     )
     parser.add_argument(
         "--num-gpus",

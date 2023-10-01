@@ -1,33 +1,21 @@
 import logging
-import argparse
+import multiprocessing
+import os
 import pickle
-import time
+import traceback
+import uuid
 import sys
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
-import random
-from hpbandster.core.worker import Worker
-import traceback
-import logging
 import hpbandster.core.nameserver as hpns
-import hpbandster.core.result as hpres
-import os
+from hpbandster.core.worker import Worker
 from hpbandster.optimizers import BOHB as BOHB
-from hpbandster.core.master import Master
-from hpbandster.core.dispatcher import Job
-
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
-# local changes
-import logging
-import multiprocessing
-logger = multiprocessing.log_to_stderr()
 import argparse
-
 import time
-import torch
 
-from pytorch_lightning.strategies import DDPStrategy
+logger = multiprocessing.log_to_stderr()
 
 
 try:
@@ -39,8 +27,6 @@ except ImportError:
     raise ImportError("For this example you need to install pytorch.")
 
 # local imports
-import sys
-
 sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_test/BoHBCode")
 
 try:
@@ -56,18 +42,16 @@ class PyTorchWorker(Worker):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
         if torch.cuda.is_available():
             logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
-            n_devices = torch.cuda.device_count()
         else:
             logging.debug("CUDA not available, using CPU")
-            n_devices = 1
 
         seed_everything(0)
         data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
+        hpo_working_directory = os.environ.get('HPO_WORKING_DIR', os.getcwd())
 
         # set up data and model
         dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
@@ -78,28 +62,25 @@ class PyTorchWorker(Worker):
         model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
-        log_dir = os.path.join(os.getcwd(), "bohb_runs/torch_trainer_logs")
-        # make the shared directory
+        trial_id = str(uuid.uuid4().hex)[:5]
+        log_dir = os.path.join(hpo_working_directory, f"{self.run_id}_logs/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
+        print(f"trial run logged at ------> {log_dir}")
+        # make the shared directory
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator=accelerator,
-            num_nodes=1,  # you. IDIOT. you forgot to set this to 1
+            num_nodes=1,
             devices=n_devices,
-            # strategy=ddp,
             strategy="ddp_spawn",
-            logger=[CSVLogger(save_dir=log_dir, name="csv_torch_trainer_logs", version="."),
-                    TensorBoardLogger(save_dir=log_dir, name="tensorboard_torch_trainer_logs", version=".")],
+            logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+                    TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
-
-            limit_train_batches=15,
-            limit_val_batches=15,
-            limit_test_batches=15, num_sanity_val_steps=1,
-            log_every_n_steps=5,
-            val_check_interval=5,
+            num_sanity_val_steps=1,
+            log_every_n_steps=10,
+            val_check_interval=50,
         )
         # train model
-        print(f"Training model From PID {os.getgid()}")
         try:
             trainer.fit(model, datamodule=dm)
         except Exception as e:
@@ -108,8 +89,6 @@ class PyTorchWorker(Worker):
             traceback.print_exc()
 
         # print metrics
-        print(f'Metrics------>{trainer.callback_metrics}')
-
         val_acc = trainer.callback_metrics['val_acc_epoch'].item()
         print(f"From PID {os.getgid()}  Best checkpoint path: {trainer.checkpoint_callback.best_model_path}")
         print(f" From PID {os.getgid()} Training complete Metrics Epoch Val Acc: {val_acc}")
@@ -174,10 +153,11 @@ class PyTorchWorker(Worker):
         cs.add_condition(cond)
         model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
                                                            ["bert-base-uncased", "bert-base-multilingual-cased",
-                                       "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
-                                       "dvm1983/TinyBERT_General_4L_312D_de",
-                                       "linhd-postdata/alberti-bert-base-multilingual-cased",
-                                       "dbmdz/distilbert-base-german-europeana-cased"])
+                                                            "deepset/bert-base-german-cased-oldvocab",
+                                                            "uklfr/gottbert-base",
+                                                            "dvm1983/TinyBERT_General_4L_312D_de",
+                                                            "linhd-postdata/alberti-bert-base-multilingual-cased",
+                                                            "dbmdz/distilbert-base-german-europeana-cased"])
         max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, log=True)
 
         train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3,
@@ -197,7 +177,7 @@ class PyTorchWorker(Worker):
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
         gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=1, upper=4,
-                                                                          log=True)
+                                                                       log=True)
         max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
         gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
 
@@ -225,20 +205,22 @@ if __name__ == "__main__":
 
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
-
+    working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
     # make the shared directory
-    os.makedirs(os.path.join(os.getcwd(),args.shared_directory), exist_ok=True)
+    os.makedirs(working_dir, exist_ok=True)
+    # store working dir as env variable
+    os.environ['HPO_WORKING_DIR'] = working_dir
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=6000)
-        w.load_nameserver_credentials(working_directory=args.shared_directory)
+        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=6000, )
+        w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
 
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
-    NS = hpns.NameServer(run_id=args.run_id, host=host, port=0, working_directory=args.shared_directory)
+    NS = hpns.NameServer(run_id=args.run_id, host=host, port=0, working_directory=working_dir)
     ns_host, ns_port = NS.start()
 
     # Most optimizers are so computationally inexpensive that we can affort to run a
@@ -272,8 +254,7 @@ if __name__ == "__main__":
 
     # In a cluster environment, you usually want to store the results for later analysis.
     # One option is to simply pickle the Result object
-    savepath = os.path.join(os.getcwd(),args.shared_directory)
-    with open(os.path.join(savepath, f'{args.run_id}_results.pkl'), 'wb') as fh:
+    with open(os.path.join(working_dir, f'{args.run_id}_results.pkl'), 'wb') as fh:
         pickle.dump(res, fh)
 
     # Step 4: Shutdown

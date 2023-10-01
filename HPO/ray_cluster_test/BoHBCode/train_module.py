@@ -1,14 +1,12 @@
-from pytorch_lightning import LightningModule
-from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
-from typing import Optional
-import torch
-import datetime
-import torchmetrics
-import evaluate
-from torch.optim import Adam, AdamW
-from torch.utils.data import DataLoader
-
 import logging
+from typing import Optional
+
+import evaluate
+import torch
+import torchmetrics
+from pytorch_lightning import LightningModule
+from torch.optim import Adam, AdamW
+from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
 
 
 class GLUETransformer(LightningModule):
@@ -138,7 +136,6 @@ class AshaTransformer(LightningModule):
 
         self.task = 'binary' if num_labels == 2 else 'multiclass'
         self.config = config
-        print(f"config----->: {config}")
 
         self.save_hyperparameters()
         self.accuracy = torchmetrics.Accuracy(task=self.task, num_classes=num_labels)
@@ -158,20 +155,12 @@ class AshaTransformer(LightningModule):
 
         self.prepare_data_per_node = True
 
-        if torch.cuda.is_available():
-            print(f"GPU available: {torch.cuda.device_count()}")
-        else:
-            print("No GPU available on LightningModule")
-
     # Training
     def forward(self, **inputs):
         return self.model(**inputs)
 
     def on_fit_start(self) -> None:
-        if torch.cuda.is_available():
-            print(f"GPU available: {torch.cuda.device_count()}")
-        else:
-            print("No GPU available on LightningModule")
+        pass
 
     def evaluate_step(self, batch, batch_idx, stage='val'):
         outputs = self(**batch)
@@ -200,7 +189,6 @@ class AshaTransformer(LightningModule):
         return result
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
-        logging.debug("test_step--->")
         return self.evaluate_step(batch, batch_idx, stage='test')
 
     def on_validation_epoch_end(self):
@@ -214,7 +202,7 @@ class AshaTransformer(LightningModule):
         return {"loss": avg_loss, "acc": avg_acc}
 
     def on_validation_end(self):
-        # last hook that's used by Trainer.
+        # last hook that's used by Trainer in ray.
         logging.debug("on_validation_end")
 
     # Optimizers

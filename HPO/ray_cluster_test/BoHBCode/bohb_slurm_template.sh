@@ -19,7 +19,6 @@ ${GIVEN_NODE}
 
 
 echo "Activate environment for Job ID $SLURM_JOB_ID"
-echo  "Print Environment Variables"
 
 export NCCL_DEBUG=INFO
 export CUDA_LAUNCH_BLOCKING=1
@@ -39,10 +38,10 @@ echo "STARTING HEAD at $node_1"
 srun --nodes=1 --ntasks=1 -w "$node_1" \
 --error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.err" \
 --output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_1}.out" \
-python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory ./datasetruns
+python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory datasetruns
 
 echo " Wait 30s before STARTING WORKERS"
-sleep 30
+sleep 60
 
 worker_num=$((SLURM_JOB_NUM_NODES - 1)) #number of nodes other than the head node
 for ((i = 1; i <= worker_num; i++)); do
@@ -51,8 +50,8 @@ for ((i = 1; i <= worker_num; i++)); do
   srun --nodes=1 --ntasks=1 -w "$node_i" \
   --error="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.err" \
   --output="/work/dlclarge1/dsengupt/logs/${SLURM_JOB_NAME}_${node_i}.out" \
-  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0  --shared_directory ./datasetruns --worker
-  sleep 5
+  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0  --shared_directory datasetruns --worker
+  sleep 20
 done
 wait
 echo 'End of Script'
