@@ -69,9 +69,9 @@ class PyTorchWorker(Worker):
         # make the shared directory
         trainer = Trainer(
             max_epochs=int(budget),
-            accelerator=accelerator,
+            accelerator="auto",
             num_nodes=1,
-            devices=n_devices,
+            devices="auto",
             strategy="ddp_spawn",
             logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                     TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
@@ -136,12 +136,12 @@ class PyTorchWorker(Worker):
 }
         """
 
-        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-5, upper=7e-5, log=True)
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=2e-5, upper=7e-5, log=True)
 
         # For demonstration purposes, we add different optimizers as categorical hyperparameters.
         # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
         # SGD has a different parameter 'momentum'.
-        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD'])
+        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD','RAdam'])
 
         sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
 
@@ -167,7 +167,9 @@ class PyTorchWorker(Worker):
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
 
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
-                                                       ['linear', 'cosine', 'cosine_with_restarts', 'polynomial',
+                                                       ['linear_with_warmup', 'cosine_with_warmup',
+                                                        'inverse_sqrt', 'cosine_with_warmup_restarts',
+                                                        'polynomial_decay_with_warmup',
                                                         'constant', 'constant_with_warmup'])
         cs.add_hyperparameters([model_name_or_path, max_seq_length, scheduler_name])
 
@@ -176,7 +178,7 @@ class PyTorchWorker(Worker):
         cs.add_hyperparameters([weight_decay, warmup_steps])
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
-        gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=1, upper=4,
+        gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=2, upper=16,
                                                                        log=True)
         max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
         gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])

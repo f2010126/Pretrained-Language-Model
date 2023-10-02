@@ -219,8 +219,7 @@ if __name__ == "__main__":
 
     if torch.cuda.is_available():
         args.use_gpu = True
-        args.num_workers = torch.cuda.device_count()
-
+        print("Using {} GPUs.".format(args.num_workers))
     # make sure data_dir is set
     data_dir = os.path.join(os.getcwd(), args.data_dir)
     os.makedirs(data_dir, exist_ok=True)
@@ -228,7 +227,7 @@ if __name__ == "__main__":
     trainer = TorchTrainer(
         train_func,
         scaling_config=ScalingConfig(
-            num_workers=args.num_workers, use_gpu=args.use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
+            num_workers=args.num_workers, use_gpu=args.use_gpu, resources_per_worker={"CPU": 1, "GPU": 1}
         ),
     )
     pbt_scheduler = PopulationBasedTraining(
@@ -258,7 +257,8 @@ if __name__ == "__main__":
             }
         },
         tune_config=TuneConfig(
-            num_samples=args.num_samples, metric="loss", mode="min", scheduler=pbt_scheduler
+            num_samples=args.num_samples, metric="loss", mode="min",
+            scheduler=pbt_scheduler,reuse_actors=True,
         ),
         run_config=RunConfig(
             stop={"training_iteration": 3 if args.smoke_test else args.num_epochs},

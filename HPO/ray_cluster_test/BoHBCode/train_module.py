@@ -6,7 +6,10 @@ import torch
 import torchmetrics
 from pytorch_lightning import LightningModule
 from torch.optim import Adam, AdamW
-from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
+from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, \
+    get_polynomial_decay_schedule_with_warmup, get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup, \
+    get_cosine_with_hard_restarts_schedule_with_warmup, get_inverse_sqrt_schedule
+
 
 
 class GLUETransformer(LightningModule):
@@ -229,15 +232,48 @@ class PLMTransformer(LightningModule):
                              eps=self.config['adam_epsilon'])
         elif self.optimizer_name == "SGD":
             optimizer = torch.optim.SGD(optimizer_grouped_parameters, lr=self.config['learning_rate'],
-                                        momentum=0.9)
+                                        momentum=self.config['sgd_momentum'])
+        elif self.optimizer_name == "RAdam":
+            optimizer = torch.optim.RAdam(optimizer_grouped_parameters, lr=self.config['learning_rate'],
+                                          eps=self.config['adam_epsilon'])
         else:
             raise ValueError(f"Invalid optimizer {self.optimizer_name}")
 
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=self.config['warmup_steps'],
-            num_training_steps=self.trainer.estimated_stepping_batches,
-        )
+        if self.scheduler_name == "linear":
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+                num_training_steps=self.trainer.estimated_stepping_batches,
+            )
+        elif self.scheduler_name == "cosine_with_warmup":
+            scheduler= get_cosine_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+                num_training_steps=self.trainer.estimated_stepping_batches,
+            )
+        elif self.scheduler_name == "inverse_sqrt":
+            scheduler = get_inverse_sqrt_schedule(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+                num_training_steps=self.trainer.estimated_stepping_batches,
+            )
+        elif self.scheduler_name == "constant_with_warmup":
+            scheduler = get_constant_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+            )
+        elif self.scheduler_name == "polynomial_decay_with_warmup":
+            scheduler = get_polynomial_decay_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+                num_training_steps=self.trainer.estimated_stepping_batches,
+            )
+        elif self.scheduler_name == "cosine_with_hard_restarts_with_warmup":
+            scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.config['warmup_steps'],
+                num_training_steps=self.trainer.estimated_stepping_batches,
+            )
         scheduler = {"scheduler": scheduler, "interval": "step", "frequency": 1}
         return [optimizer], [scheduler]
 

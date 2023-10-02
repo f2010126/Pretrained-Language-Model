@@ -488,23 +488,23 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    # args = parse_args()
+    #
+    # if args.server_address:
+    #     context = ray.init(f"ray://{args.server_address}")
+    # elif args.ray_address:
+    #     context = ray.init(address=args.ray_address)
+    # elif args.smoke_test:
+    #     context = ray.init()
+    # else:
+    #     context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+    # print("Dashboard URL: http://{}".format(context.dashboard_url))
 
-    if args.server_address:
-        context = ray.init(f"ray://{args.server_address}")
-    elif args.ray_address:
-        context = ray.init(address=args.ray_address)
-    elif args.smoke_test:
-        context = ray.init()
-    else:
-        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
-    print("Dashboard URL: http://{}".format(context.dashboard_url))
-
-    # parser = argparse.ArgumentParser(description="Tune on local")
-    # parser.add_argument(
-    #     "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
-    # parser.add_argument("--exp-name", type=str, default="local_tune_transform")
-    # args, _ = parser.parse_known_args()
+    parser = argparse.ArgumentParser(description="Tune on local")
+    parser.add_argument(
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+    parser.add_argument("--exp-name", type=str, default="local_tune_transform")
+    args, _ = parser.parse_known_args()
 
     if not torch.cuda.is_available():
         print("No GPU available")

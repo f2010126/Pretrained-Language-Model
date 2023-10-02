@@ -46,16 +46,18 @@ hpo_config = {
                                        "linhd-postdata/alberti-bert-base-multilingual-cased",
                                        "dbmdz/distilbert-base-german-europeana-cased", ]),
 
-    'optimizer_name': tune.choice(["AdamW", "Adam"]),
-    'scheduler_name': tune.choice(["linear", "cosine", "cosine_with_restarts", "polynomial", "constant"]),
-    'learning_rate': tune.loguniform(1e-5, 6e-5),
+    'optimizer_name': tune.choice(['Adam', 'AdamW', 'SGD', 'RAdam']),
+    'scheduler_name': tune.choice(['linear_with_warmup', 'cosine_with_warmup',
+                                   'inverse_sqrt', 'cosine_with_warmup_restarts',
+                                   'polynomial_decay_with_warmup',
+                                   'constant', 'constant_with_warmup']),
+    'learning_rate': tune.loguniform(2e-5, 6e-5),
     'weight_decay': tune.loguniform(1e-5, 1e-3),
     'adam_epsilon': tune.loguniform(1e-8, 1e-6),
     'warmup_steps': tune.choice([0, 100, 1000]),
-    'per_device_train_batch_size': tune.choice([2]),
-    'per_device_eval_batch_size': tune.choice([2, ]),
-    'gradient_accumulation_steps': tune.choice([1, 2, 4]),
-    'num_train_epochs': tune.choice([2, 3, 4]),
+    'per_device_train_batch_size': tune.choice([2, 4, 8]),
+    'per_device_eval_batch_size': tune.choice([2, 4, 8]),
+    'gradient_accumulation_steps': tune.choice([2, 4, 8]),
     'max_steps': tune.choice([-1, 100, 1000]),
     'max_grad_norm': tune.choice([0.0, 1.0, 2.0]),
     'seed': tune.choice([42, 1234, 2021]),
@@ -76,8 +78,7 @@ class MyCallback(Callback):
 
 
 def objective_torch_trainer(config):
-    print(f"env var {os.environ.get('DATADIR')}")
-    data_dir= os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
+    data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
     logging.debug(f"dir {data_dir} and cwd {os.getcwd()}")
     dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
                         max_seq_length=config['max_seq_length'],
@@ -89,25 +90,22 @@ def objective_torch_trainer(config):
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     trainer = pl.Trainer(
         max_epochs=config['num_epochs'],
-        logger=[CSVLogger(save_dir=log_dir, name="csv_torch_trainer_logs", version="."),
-                TensorBoardLogger(save_dir=log_dir, name="tensorboard_torch_trainer_logs", version=".")],
+        logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+                TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
 
         # If fractional GPUs passed in, convert to int.
         devices='auto',
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
-        val_check_interval=5,  # check validation after 100 train batches
+        val_check_interval=50,  # check validation after 100 train batches
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback],
         accumulate_grad_batches=config['gradient_accumulation_steps'],
         gradient_clip_val=config['max_grad_norm'],
         gradient_clip_algorithm=config['gradient_clip_algorithm'],
-
         accelerator='auto',
-        limit_train_batches=5,
-        limit_val_batches=5,
-        log_every_n_steps=2,
+        log_every_n_steps=50,
     )
 
     # Validate your Lightning trainer configuration
@@ -164,7 +162,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
         print("Restoring from checkpoint---->")
         tuner = tune.Tuner.restore(restore_path,
                                    trainable=ray_trainer,
-                                   #resume_unfinished=True,
+                                   # resume_unfinished=True,
                                    resume_errored=True,
                                    restart_errored=False,
                                    # param_space={"train_loop_config": hpo_config},
