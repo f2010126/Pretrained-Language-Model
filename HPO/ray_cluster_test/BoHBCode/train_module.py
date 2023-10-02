@@ -237,9 +237,9 @@ class PLMTransformer(LightningModule):
             optimizer = torch.optim.RAdam(optimizer_grouped_parameters, lr=self.config['learning_rate'],
                                           eps=self.config['adam_epsilon'])
         else:
-            raise ValueError(f"Invalid optimizer {self.optimizer_name}")
+            raise ValueError(f"Invalid optimizer {self.optimizer_name} config: {self.config}")
 
-        if self.scheduler_name == "linear":
+        if self.scheduler_name == "linear_with_warmup":
             scheduler = get_linear_schedule_with_warmup(
                 optimizer,
                 num_warmup_steps=self.config['warmup_steps'],
@@ -255,7 +255,6 @@ class PLMTransformer(LightningModule):
             scheduler = get_inverse_sqrt_schedule(
                 optimizer,
                 num_warmup_steps=self.config['warmup_steps'],
-                num_training_steps=self.trainer.estimated_stepping_batches,
             )
         elif self.scheduler_name == "constant_with_warmup":
             scheduler = get_constant_schedule_with_warmup(
@@ -274,6 +273,8 @@ class PLMTransformer(LightningModule):
                 num_warmup_steps=self.config['warmup_steps'],
                 num_training_steps=self.trainer.estimated_stepping_batches,
             )
+        else:
+            raise ValueError(f"Invalid scheduler {self.scheduler_name} config: {self.config}")
         scheduler = {"scheduler": scheduler, "interval": "step", "frequency": 1}
         return [optimizer], [scheduler]
 

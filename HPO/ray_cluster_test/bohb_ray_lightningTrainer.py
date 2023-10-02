@@ -48,12 +48,13 @@ hpo_config = {
 
     'optimizer_name': tune.choice(['Adam', 'AdamW', 'SGD', 'RAdam']),
     'scheduler_name': tune.choice(['linear_with_warmup', 'cosine_with_warmup',
-                                   'inverse_sqrt', 'cosine_with_warmup_restarts',
+                                   'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
                                    'polynomial_decay_with_warmup',
-                                   'constant', 'constant_with_warmup']),
+                                    'constant_with_warmup']),
     'learning_rate': tune.loguniform(2e-5, 6e-5),
     'weight_decay': tune.loguniform(1e-5, 1e-3),
     'adam_epsilon': tune.loguniform(1e-8, 1e-6),
+    'sgd_momentum': tune.loguniform(0.8, 0.99),
     'warmup_steps': tune.choice([0, 100, 1000]),
     'per_device_train_batch_size': tune.choice([2, 4, 8]),
     'per_device_eval_batch_size': tune.choice([2, 4, 8]),
@@ -78,9 +79,9 @@ class MyCallback(Callback):
 
 
 def objective_torch_trainer(config):
-    data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
+    data_dir = config['data_dir']
     logging.debug(f"dir {data_dir} and cwd {os.getcwd()}")
-    dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
+    dm = get_datamodule(task_name=config['task_name'], model_name_or_path=config['model_name_or_path'],
                         max_seq_length=config['max_seq_length'],
                         train_batch_size=config['per_device_train_batch_size'],
                         eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
@@ -109,13 +110,19 @@ def objective_torch_trainer(config):
     )
 
     # Validate your Lightning trainer configuration
-    trainer = prepare_trainer(trainer)
-    trainer.fit(model, datamodule=dm)
+    try:
+        trainer = prepare_trainer(trainer)
+        trainer.fit(model, datamodule=dm)
+    except Exception as e:
+        print(f"config ------> {config}")
+        print(traceback.format_exc())
+        print("Other error", e)
+        print(traceback.format_exc())
     print("Finished obj")
 
 
 # BOHB LOOP
-def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
+def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
     if torch.cuda.is_available():
         use_gpu = True
         # each Trainer gets that.
@@ -136,10 +143,13 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
         objective_torch_trainer,
         scaling_config=scaling_config,
     )
+    hpo_config['data_dir'] = os.path.join(os.getcwd(), "tokenised_data")
+    hpo_config['task_name'] = task_name
 
     result_dir = os.path.join(os.getcwd(), "ray_results_result")
     # Fault Tolerance Code
     restore_path = os.path.join(result_dir, exp_name)
+    print(f"Restore path is {restore_path}, result_dir is {result_dir}")
 
     max_iterations = 3
     # scheduler
@@ -215,7 +225,7 @@ def parse_args():
         default=False,
         help="Enables GPU training")
     parser.add_argument(
-        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument(
         "--ray-address",
         help="Address of Ray cluster for seamless distributed execution.")
@@ -229,6 +239,7 @@ def parse_args():
     parser.add_argument("--exp-name", type=str, default="tune_bohb")
     parser.add_argument("--num-trials", type=int, default=10)
     parser.add_argument("--num-gpu", type=int, default=4, help="Number of distributed workers per trial")
+    parser.add_argument("--task-name", type=str, default="sentilex")
     return parser.parse_known_args()
 
 
@@ -262,9 +273,9 @@ if __name__ == "__main__":
         print("Running smoke test")
         args.exp_name = args.exp_name + "_smoke"
         torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=3,
-                           exp_name=args.exp_name)
+                           exp_name=args.exp_name, task_name=args.task_name)
     else:
         torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
-                           exp_name=args.exp_name)
+                           exp_name=args.exp_name, task_name=args.task_name)
 
     print("END OF MAIN SCRIPT")
