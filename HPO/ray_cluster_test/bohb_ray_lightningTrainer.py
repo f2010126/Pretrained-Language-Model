@@ -94,13 +94,21 @@ def objective_torch_trainer(config):
 
         # If fractional GPUs passed in, convert to int.
         devices='auto',
-        accelerator='auto',
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
-        val_check_interval=0.5,  # check validation set 4 times during a training epoch
+        val_check_interval=5,  # check validation after 100 train batches
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
-        callbacks=[ckpt_report_callback])
+        callbacks=[ckpt_report_callback],
+        accumulate_grad_batches=config['gradient_accumulation_steps'],
+        gradient_clip_val=config['max_grad_norm'],
+        gradient_clip_algorithm=config['gradient_clip_algorithm'],
+
+        accelerator='auto',
+        limit_train_batches=5,
+        limit_val_batches=5,
+        log_every_n_steps=2,
+    )
 
     # Validate your Lightning trainer configuration
     trainer = prepare_trainer(trainer)
@@ -121,13 +129,13 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
         use_gpu = False
         scaling_config = ray.train.ScalingConfig(
             # no of other nodes?
-            num_workers=5, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+            num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
         )
 
-    train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
-                                                    data_dir=os.path.join(os.getcwd(), "tokenized_data"))
+    # train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
+    #                                                 data_dir=os.path.join(os.getcwd(), "tokenized_data"))
     ray_trainer = TorchTrainer(
-        train_fn_with_parameters,
+        objective_torch_trainer,
         scaling_config=scaling_config,
     )
 
@@ -150,15 +158,16 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
         # space=config_space,  # If you want to set the space manually
     )
     # Number of parallel runs allowed
-    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=6)
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
 
     if tune.Tuner.can_restore(restore_path):
+        print("Restoring from checkpoint---->")
         tuner = tune.Tuner.restore(restore_path,
                                    trainable=ray_trainer,
-                                   resume_unfinished=True,
+                                   #resume_unfinished=True,
                                    resume_errored=True,
                                    restart_errored=False,
-                                   param_space={"train_loop_config": hpo_config},
+                                   # param_space={"train_loop_config": hpo_config},
                                    )
     else:
         tuner = tune.Tuner(ray_trainer,
@@ -169,6 +178,8 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_mnist'):
                                search_alg=bohb_search,
                                reuse_actors=False,
                                num_samples=num_trials,
+                               trial_name_creator=trial_dir_name,
+                               trial_dirname_creator=trial_dir_name,
                            ),
                            run_config=ray.train.RunConfig(
                                name=exp_name,
@@ -206,7 +217,7 @@ def parse_args():
         default=False,
         help="Enables GPU training")
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument(
         "--ray-address",
         help="Address of Ray cluster for seamless distributed execution.")
@@ -242,6 +253,8 @@ if __name__ == "__main__":
     #     "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
     # parser.add_argument("--exp-name", type=str, default="local_tune_bohb10")
     # args, _ = parser.parse_known_args()
+    os.environ['DATADIR'] = str(os.path.join(os.getcwd(), "tokenized_data"))
+    print(f"DATADIR in main is -----> {os.environ['DATADIR']}")
 
     if not torch.cuda.is_available():
         args.exp_name = args.exp_name + "_cpu"
@@ -250,7 +263,7 @@ if __name__ == "__main__":
     if args.smoke_test:
         print("Running smoke test")
         args.exp_name = args.exp_name + "_smoke"
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=2,
+        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=3,
                            exp_name=args.exp_name)
     else:
         torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
