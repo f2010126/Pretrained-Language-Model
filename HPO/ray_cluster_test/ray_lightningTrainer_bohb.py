@@ -31,10 +31,12 @@ logger = multiprocessing.log_to_stderr()
 # local imports
 try:
     from BoHBCode.data_modules import OmpData, get_datamodule
-    from BoHBCode.train_module import AshaTransformer
+    from BoHBCode.train_module import PLMTransformer
+    from asha_ray_transformers import trial_dir_name
 except ImportError:
     from .BoHBCode.data_modules import OmpData, get_datamodule
-    from .BoHBCode.train_module import AshaTransformer
+    from .BoHBCode.train_module import PLMTransformer
+    from .asha_ray_transformers import trial_dir_name
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 hpo_config = {
@@ -59,6 +61,7 @@ hpo_config = {
     'seed': tune.choice([42, 1234, 2021]),
     'max_seq_length': tune.choice([128, 256, 512]),
     "num_epochs": tune.choice([2, 3, 4]),
+    "gradient_clip_algorithm": tune.choice(["norm", "value"]),
 }
 
 
@@ -72,14 +75,16 @@ class MyCallback(Callback):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
 
 
-def objective_torch_trainer(config, data_dir=os.path.join(os.getcwd(), "tokenised_data")):
-    logging.debug(f"config-------> {config} in dir {data_dir} and cwd {os.getcwd()}")
+def objective_torch_trainer(config):
+    print(f"env var {os.environ.get('DATADIR')}")
+    data_dir= os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
+    logging.debug(f"dir {data_dir} and cwd {os.getcwd()}")
     dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
                         max_seq_length=config['max_seq_length'],
                         train_batch_size=config['per_device_train_batch_size'],
                         eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
     dm.setup("fit")
-    model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
+    model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
     ckpt_report_callback = RayTrainReportCallback()
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     trainer = pl.Trainer(

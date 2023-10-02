@@ -31,11 +31,11 @@ sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_te
 
 try:
     from data_modules import get_datamodule
-    from train_module import AshaTransformer, GLUETransformer
+    from train_module import PLMTransformer, GLUETransformer
     from asha_ray_transformers import trial_dir_name
 except ImportError:
     from data_modules import get_datamodule
-    from train_module import AshaTransformer, GLUETransformer
+    from train_module import PLMTransformer, GLUETransformer
 
 
 class PyTorchWorker(Worker):
@@ -59,7 +59,7 @@ class PyTorchWorker(Worker):
                             train_batch_size=config['per_device_train_batch_size'],
                             eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
         dm.setup("fit")
-        model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
+        model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
         trial_id = str(uuid.uuid4().hex)[:5]

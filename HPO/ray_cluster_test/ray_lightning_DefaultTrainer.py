@@ -1,25 +1,26 @@
 import argparse
-import torch
-import time
-from pytorch_lightning.loggers import TensorBoardLogger
-
-from torch.nn import functional as F
-from torchmetrics import Accuracy
-import pytorch_lightning as pl
 import os
-from typing import List
+import time
 import traceback
-from torch.utils.data import random_split, DataLoader
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
-from torchvision import datasets, transforms
+from typing import List
+
+import pytorch_lightning as pl
+import ray
+import torch
+from pytorch_lightning.loggers import TensorBoardLogger
 from ray import air, tune
 from ray.air.config import RunConfig, ScalingConfig, CheckpointConfig
-from ray.tune.schedulers import ASHAScheduler, PopulationBasedTraining
-import ray
-from ray.tune import CLIReporter
 from ray.train.lightning import LightningConfigBuilder, LightningTrainer
-
+from ray.tune import CLIReporter
 from ray.tune import Callback
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
+from ray.tune.search.bohb import TuneBOHB
+from torch.nn import functional as F
+from torch.utils.data import random_split, DataLoader
+from torchmetrics import Accuracy
+from torchvision import datasets, transforms
+from ray.tune.experiment import Trial
 
 
 class MyCallback(Callback):
@@ -135,28 +136,157 @@ class LightningMNISTClassifier(pl.LightningModule):
         print("---------- Finished validation?")
 
 
-def train_mnist_tune(config, num_epochs=10, num_gpus=0):
-    pl.seed_everything(0)
-    data_dir = os.path.abspath("./data")
-    model = LightningMNISTClassifier(config, data_dir)
-    # set up data loaders
+def tune_bohb(num_samples=10, num_epochs=10, exp_name="tune_bohb_mnist"):
+    config = {
+        "layer_1": tune.choice([32, 64, 128]),
+        "layer_2": tune.choice([64, 128, 256]),
+        "lr": tune.loguniform(1e-4, 1e-1),
+        "batch_size": tune.choice([32, 64, 128]),
+    }
+    # Static configs that does not change across trials
     dm = DataModuleMNIST()
-    dm.setup("fit")
-    metrics = {"loss": "val_loss", "acc": "val_accuracy"}
-    n_devices = torch.cuda.device_count()
-    accelerator = 'cpu' if n_devices == 0 else 'auto'
-    trainer = pl.Trainer(
-        max_epochs=num_epochs,
-        # If fractional GPUs passed in, convert to int.
-        devices=num_gpus,
-        accelerator="auto",
-        # strategy="auto", # set by the LightningTrainer
-        # enable_progress_bar=True,
-        callbacks=[TuneReportCallback(['ptl/val_loss', 'ptl/val_accuracy'], on="validation_end")],
+    # doesn't call prepare data
+    logger = TensorBoardLogger(save_dir=os.getcwd(), name="tune-bohb-ptl-example", version=".")
+    if torch.cuda.is_available():
+        accelerator = 'gpu'
+        use_gpu = True
+        gpus_per_trial = 2
+        scaling_config = ScalingConfig(
+            # no of other nodes?
+            num_workers=gpus_per_trial, use_gpu=use_gpu, resources_per_worker={"CPU": 2, "GPU": 1}
+        )
+    else:
+        accelerator = 'cpu'
+        use_gpu = False
+        scaling_config = ScalingConfig(
+            # no of other nodes?
+            num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+        )
+    print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
+
+    static_lightning_config = (
+        LightningConfigBuilder()
+        .module(cls=LightningMNISTClassifier)
+        .trainer(max_epochs=num_epochs, accelerator=accelerator, logger=logger, )
+        .fit_params(datamodule=dm)
+        # .strategy(name='ddp')
+        .checkpointing(monitor="ptl/val_accuracy", save_top_k=2, mode="max")
+        .build()
     )
-    print("----->Starting training")
-    trainer.fit(model, dm)
-    print("Finished training")
+
+    # Searchable configs across different trials
+    searchable_lightning_config = (
+        LightningConfigBuilder()
+        .module(config={
+            "layer_1": tune.choice([32, 64, 128]),
+            "layer_2": tune.choice([64, 128, 256]),
+            "lr": tune.loguniform(1e-4, 1e-1),
+            "batch_size": tune.choice([32, 64, 128]),
+        })
+        .build()
+    )
+
+    # Make sure to also define an AIR CheckpointConfig here
+    # to properly save checkpoints in AIR format.
+    run_config = RunConfig(
+        checkpoint_config=CheckpointConfig(
+            num_to_keep=2,
+            checkpoint_score_attribute="ptl/val_accuracy",
+            checkpoint_score_order="max",
+        ),
+        callbacks=[MyCallback()]
+    )
+
+    max_iterations = 3
+    # scheduler
+    bohb_hyperband = HyperBandForBOHB(
+        time_attr="training_iteration",
+        max_t=max_iterations,  # max time per trial? max length of time a trial
+        reduction_factor=2,  # cut down trials by factor of?
+        stop_last_trials=True,
+        # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
+    )
+
+    # search Algo
+    bohb_search = TuneBOHB(
+        # space=config_space,  # If you want to set the space manually
+    )
+    # Number of parallel runs allowed
+    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=6)
+
+    lightning_trainer = LightningTrainer(
+        lightning_config=static_lightning_config,
+        scaling_config=scaling_config,
+    )
+    reporter = CLIReporter(
+        parameter_columns=["layer_1", "layer_2", "lr", "batch_size"],
+        metric_columns=["loss", "mean_accuracy", "training_iteration"])
+    # Fault Tolerance
+    result_dir = os.path.join(os.getcwd(), "ray_results")
+    restore_path = os.path.join(result_dir, exp_name)
+
+    if os.path.exists(restore_path):
+        restore_config = {
+            "lightning_config/_module_init_config/config/layer_1": tune.choice([32, 64, 128]),
+            "lightning_config/_module_init_config/config/layer_2": tune.choice([64, 128, 256]),
+            "lightning_config/_module_init_config/config/lr": tune.loguniform(1e-4, 1e-1),
+            "lightning_config/_module_init_config/config/batch_size": tune.choice([32, 64, 128]),
+        }
+
+        print("Restoring from checkpoint---->")
+        tuner = tune.Tuner.restore(restore_path,
+                                   trainable=lightning_trainer,
+                                   resume_unfinished=True,
+                                   resume_errored=True,
+                                   restart_errored=False,
+                                   # param_space=restore_config,
+                                   )
+    else:
+        print("Creating new tuner---->")
+        tuner = tune.Tuner(
+            lightning_trainer,
+            param_space={"lightning_config": searchable_lightning_config},
+            tune_config=tune.TuneConfig(  # for Tuner
+                time_budget_s=3000,
+                metric="ptl/val_accuracy",
+                mode="max",
+                num_samples=num_samples,  # Number of times to sample from the hyperparameter space
+                scheduler=bohb_hyperband,
+                search_alg=bohb_search,
+                reuse_actors=False,
+            ),
+            run_config=air.RunConfig(  # for Tuner.run
+                name=exp_name,
+                verbose=2,
+                storage_path=result_dir,
+                log_to_file=True,
+                # configs given to Tuner are used.
+                # progress_reporter=reporter,
+                checkpoint_config=CheckpointConfig(
+                    num_to_keep=2,
+                    checkpoint_score_attribute="ptl/val_accuracy",
+                    checkpoint_score_order="max",
+                ),
+                callbacks=[MyCallback()]
+            ),
+        )
+
+    try:
+        start = time.time()
+        results = tuner.fit()
+        end = time.time()
+        hours, rem = divmod(end - start, 3600)
+        minutes, seconds = divmod(rem, 60)
+        print("{:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+        best_result = results.get_best_result(metric="ptl/val_accuracy", mode="max")
+        print("Best hyperparameters found were: ", best_result)
+    except ray.exceptions.RayTaskError:
+        print("User function raised an exception!")
+    except Exception as e:
+        print("Other error", e)
+        print(traceback.format_exc())
+
+    print("END")
 
 
 def tune_mnist(num_samples=10, num_epochs=10, exp_name="tune_mnist"):
@@ -183,7 +313,7 @@ def tune_mnist(num_samples=10, num_epochs=10, exp_name="tune_mnist"):
         use_gpu = False
         scaling_config = ScalingConfig(
             # no of other nodes?
-            num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+            num_workers=3, use_gpu=use_gpu, resources_per_worker={"CPU": 1 }
         )
     print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
 
@@ -236,34 +366,54 @@ def tune_mnist(num_samples=10, num_epochs=10, exp_name="tune_mnist"):
     reporter = CLIReporter(
         parameter_columns=["layer_1", "layer_2", "lr", "batch_size"],
         metric_columns=["loss", "mean_accuracy", "training_iteration"])
+    # Fault Tolerance
+    result_dir = os.path.join(os.getcwd(), "ray_results")
+    restore_path = os.path.join(result_dir, exp_name)
 
-    tuner = tune.Tuner(
-        lightning_trainer,
-        param_space={"lightning_config": searchable_lightning_config},
-        tune_config=tune.TuneConfig(  # for Tuner
-            time_budget_s=3000,
-            metric="ptl/val_accuracy",
-            mode="max",
-            num_samples=num_samples,  # Number of times to sample from the hyperparameter space
-            scheduler=scheduler,
-            reuse_actors=False,
-        ),
-        run_config=air.RunConfig(  # for Tuner.run
-            name=exp_name,
-            verbose=2,
-            storage_path="./ray_results",
-            log_to_file=True,
-            # configs given to Tuner are used.
-            # progress_reporter=reporter,
-            checkpoint_config=CheckpointConfig(
-                num_to_keep=2,
-                checkpoint_score_attribute="ptl/val_accuracy",
-                checkpoint_score_order="max",
+    if os.path.exists(restore_path):
+        restore_config = {
+            "lightning_config/_module_init_config/config/layer_1": tune.choice([32, 64, 128]),
+            "lightning_config/_module_init_config/config/layer_2": tune.choice([64, 128, 256]),
+            "lightning_config/_module_init_config/config/lr": tune.loguniform(1e-4, 1e-1),
+            "lightning_config/_module_init_config/config/batch_size": tune.choice([32, 64, 128]),
+        }
+
+        print("Restoring from checkpoint---->")
+        tuner = tune.Tuner.restore(restore_path,
+                                   trainable=lightning_trainer,
+                                   resume_unfinished=True,
+                                   resume_errored=True,
+                                   restart_errored=False,
+                                   param_space=restore_config,
+                                   )
+    else:
+        print("Creating new tuner---->")
+        tuner = tune.Tuner(
+            lightning_trainer,
+            param_space={"lightning_config": searchable_lightning_config},
+            tune_config=tune.TuneConfig(  # for Tuner
+                time_budget_s=3000,
+                metric="ptl/val_accuracy",
+                mode="max",
+                num_samples=num_samples,  # Number of times to sample from the hyperparameter space
+                scheduler=scheduler,
+                reuse_actors=False,
             ),
-            callbacks=[MyCallback()]
-        ),
-
-    )
+            run_config=air.RunConfig(  # for Tuner.run
+                name=exp_name,
+                verbose=2,
+                storage_path=result_dir,
+                log_to_file=True,
+                # configs given to Tuner are used.
+                # progress_reporter=reporter,
+                checkpoint_config=CheckpointConfig(
+                    num_to_keep=2,
+                    checkpoint_score_attribute="ptl/val_accuracy",
+                    checkpoint_score_order="max",
+                ),
+                callbacks=[MyCallback()]
+            ),
+        )
 
     try:
         start = time.time()
@@ -322,15 +472,19 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Tune on local")
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
     parser.add_argument("--exp-name", type=str, default="tune_mnist")
     args, _ = parser.parse_known_args()
+
+    if not torch.cuda.is_available():
+        args.exp_name = "bohb13" + "_cpu"
+        args.num_gpu = 0
 
     # Start training
     if args.smoke_test:
         print("Smoketesting...")
         # train_mnist_tune(config={"layer_1": 32, "layer_2": 64, "lr": 1e-3, "batch_size": 64},
         #                  num_epochs=1, num_gpus=2)
-        tune_mnist(num_samples=2, num_epochs=2, exp_name=args.exp_name)
+        tune_bohb(num_samples=13, num_epochs=2, exp_name=args.exp_name)
     else:
-        tune_mnist(num_samples=15, num_epochs=3, exp_name=args.exp_name)
+        tune_bohb(num_samples=15, num_epochs=3, exp_name=args.exp_name)

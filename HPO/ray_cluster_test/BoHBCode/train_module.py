@@ -122,7 +122,7 @@ class GLUETransformer(LightningModule):
         return [optimizer], [scheduler]
 
 
-class AshaTransformer(LightningModule):
+class PLMTransformer(LightningModule):
     def __init__(
             self,
             config,

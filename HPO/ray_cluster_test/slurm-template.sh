@@ -78,3 +78,6 @@ done
 
 # ===== Call your code below =====
 ${COMMAND_PLACEHOLDER}
+
+
+# ===== Code clean-up =====

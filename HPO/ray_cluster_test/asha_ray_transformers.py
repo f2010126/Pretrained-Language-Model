@@ -29,10 +29,10 @@ import sys
 # local imports
 try:
     from BoHBCode.data_modules import OmpData, get_datamodule
-    from BoHBCode.train_module import AshaTransformer
+    from BoHBCode.train_module import PLMTransformer
 except ImportError:
     from .BoHBCode.data_modules import OmpData, get_datamodule
-    from .BoHBCode.train_module import AshaTransformer
+    from .BoHBCode.train_module import PLMTransformer
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 
@@ -116,7 +116,7 @@ def objective_torch_trainer(config, data_dir=os.path.join(os.getcwd(), "testing_
                         train_batch_size=config['per_device_train_batch_size'],
                         eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
     dm.setup("fit")
-    model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
+    model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
     ckpt_report_callback = RayTrainReportCallback()
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     print(f"log_dir-----> {log_dir}")
@@ -438,7 +438,7 @@ def objective_func(config, data_dir='data'):
                         eval_batch_size=config['per_device_eval_batch_size'],
                         data_dir=data_dir)
     dm.setup("fit")
-    model = AshaTransformer(config=config, num_labels=dm.task_metadata['num_labels'], dataset_name="omp")
+    model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'], dataset_name="omp")
     tune_callback = TuneReportCallback(
         {
             "loss": "ptl/val_loss",
