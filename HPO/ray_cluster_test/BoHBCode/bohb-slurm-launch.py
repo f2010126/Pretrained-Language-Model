@@ -55,9 +55,7 @@ if __name__ == "__main__":
     else:
         node_info = ""
 
-    job_name = "{}_{}".format(
-        args.exp_name, time.strftime("%m%d-%H%M", time.localtime())
-    )
+    job_name = "{}".format(args.exp_name )
 
     partition_option = (
         "#SBATCH --partition={}".format(args.partition) if args.partition else ""

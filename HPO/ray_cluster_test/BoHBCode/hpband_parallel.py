@@ -38,9 +38,11 @@ except ImportError:
     from train_module import PLMTransformer, GLUETransformer
 
 
-class PyTorchWorker(Worker):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **kwargs):
+    super().__init__(*args, **kwargs)
+    self.data_dir = data_dir
+    self.log_dir = log_dir
+    self.task = task_name
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
@@ -54,18 +56,18 @@ class PyTorchWorker(Worker):
         hpo_working_directory = os.environ.get('HPO_WORKING_DIR', os.getcwd())
 
         # set up data and model
-        dm = get_datamodule(task_name="sentilex", model_name_or_path=config['model_name_or_path'],
+        dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
                             max_seq_length=config['max_seq_length'],
                             train_batch_size=config['per_device_train_batch_size'],
-                            eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
+                            eval_batch_size=config['per_device_eval_batch_size'], data_dir=self.data_dir)
         dm.setup("fit")
         model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
         trial_id = str(uuid.uuid4().hex)[:5]
-        log_dir = os.path.join(hpo_working_directory, f"{self.run_id}_logs/run_{trial_id}")
+        log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
-        print(f"trial run logged at ------> {log_dir}")
+        print(f"trial run logged at ------> {log_dir}, working dir: {working_directory}, hpo working dir: {hpo_working_directory}")
         # make the shared directory
         trainer = Trainer(
             max_epochs=int(budget),
@@ -77,25 +79,32 @@ class PyTorchWorker(Worker):
                     TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
-            log_every_n_steps=10,
-            val_check_interval=50,
+            enable_progress_bar=False,
+            log_every_n_steps=5,
+            val_check_interval=5,
+            limit_train_batches=30,
+            limit_val_batches=20,
+            limit_test_batches=20,
+
+            accumulate_grad_batches=config['gradient_accumulation_steps'],
+            gradient_clip_val=config['max_grad_norm'],
+            gradient_clip_algorithm=config['gradient_clip_algorithm'],
         )
         # train model
         try:
             trainer.fit(model, datamodule=dm)
         except Exception as e:
-            print("Exception in training: ")
+            print(f"Exception in training: with config {config} and budget {budget}")
             print(e)
             traceback.print_exc()
 
-        # print metrics
         val_acc = trainer.callback_metrics['val_acc_epoch'].item()
         print(f"From PID {os.getgid()}  Best checkpoint path: {trainer.checkpoint_callback.best_model_path}")
         print(f" From PID {os.getgid()} Training complete Metrics Epoch Val Acc: {val_acc}")
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': trainer.logged_metrics,
+            'info': {'all_metrics': trainer.callback_metrics,
                      }
 
         })
@@ -135,22 +144,13 @@ class PyTorchWorker(Worker):
     "gradient_clip_algorithm": tune.choice(["norm", "value"]),
 }
         """
-
-        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=2e-5, upper=7e-5, log=True)
-
-        # For demonstration purposes, we add different optimizers as categorical hyperparameters.
-        # To show how to use conditional hyperparameters with ConfigSpace, we'll add the optimizers 'Adam' and 'SGD'.
-        # SGD has a different parameter 'momentum'.
-        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD','RAdam'])
-
-        sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
-
-        cs.add_hyperparameters([lr, optimizer, sgd_momentum])
-
-        # The hyperparameter sgd_momentum will be used,if the configuration
-        # contains 'SGD' as optimizer.
-        cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
-        cs.add_condition(cond)
+        # Dataset related
+        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, log=True)
+        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3,
+                                                                log=True)
+        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3,
+                                                               log=True)
+        cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu,max_seq_length])
         model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
                                                            ["bert-base-uncased", "bert-base-multilingual-cased",
                                                             "deepset/bert-base-german-cased-oldvocab",
@@ -158,24 +158,25 @@ class PyTorchWorker(Worker):
                                                             "dvm1983/TinyBERT_General_4L_312D_de",
                                                             "linhd-postdata/alberti-bert-base-multilingual-cased",
                                                             "dbmdz/distilbert-base-german-europeana-cased"])
-        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, log=True)
 
-        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3,
-                                                                log=True)
-        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3,
-                                                               log=True)
-        cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu])
+        # Model related
+        optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD', 'RAdam'])
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=2e-5, upper=7e-5, log=True)
+        sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
+        cs.add_hyperparameters([model_name_or_path, lr, optimizer, sgd_momentum])
+        # The hyperparameter sgd_momentum will be used,if the configuration
+        # contains 'SGD' as optimizer.
+        cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
+        cs.add_condition(cond)
 
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
                                                        ['linear_with_warmup', 'cosine_with_warmup',
-                                                        'inverse_sqrt', 'cosine_with_warmup_restarts',
-                                                        'polynomial_decay_with_warmup',
-                                                        'constant', 'constant_with_warmup'])
-        cs.add_hyperparameters([model_name_or_path, max_seq_length, scheduler_name])
+                                                        'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
+                                                        'polynomial_decay_with_warmup','constant_with_warmup'])
 
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
         warmup_steps = CSH.UniformIntegerHyperparameter('warmup_steps', lower=10, upper=1000, log=True)
-        cs.add_hyperparameters([weight_decay, warmup_steps])
+        cs.add_hyperparameters([scheduler_name,weight_decay, warmup_steps])
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
         gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=2, upper=16,
@@ -229,6 +230,7 @@ if __name__ == "__main__":
     # worker in parallel to it. Note that this one has to run in the background to
     # not plock!
     # comment out for now.
+
     w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
     w.run(background=True)
 
