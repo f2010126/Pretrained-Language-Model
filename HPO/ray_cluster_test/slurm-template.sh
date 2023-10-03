@@ -20,7 +20,7 @@ ${GIVEN_NODE}
 #SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}.out
 #SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}.error
 
-#SBATCH --time=14:10:00
+#SBATCH --time=22:10:00
 
 # Load modules or your own conda environment here
 # module load pytorch/v1.4.0-gpu

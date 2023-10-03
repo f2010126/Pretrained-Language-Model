@@ -50,7 +50,7 @@ hpo_config = {
     'scheduler_name': tune.choice(['linear_with_warmup', 'cosine_with_warmup',
                                    'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
                                    'polynomial_decay_with_warmup',
-                                    'constant_with_warmup']),
+                                   'constant_with_warmup']),
     'learning_rate': tune.loguniform(2e-5, 6e-5),
     'weight_decay': tune.loguniform(1e-5, 1e-3),
     'adam_epsilon': tune.loguniform(1e-8, 1e-6),

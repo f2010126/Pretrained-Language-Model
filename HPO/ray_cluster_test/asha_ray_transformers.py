@@ -25,8 +25,6 @@ from ray.tune.integration.pytorch_lightning import TuneReportCallback
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
 from ray.tune.search.bohb import TuneBOHB
-import logging
-import sys
 
 # local imports
 try:
@@ -452,7 +450,7 @@ def objective_func(config, data_dir='data'):
         max_epochs=config['num_epochs'],
         # If fractional GPUs passed in, convert to int.
         devices='auto',
-        accelerator='auto',
+        accelerator='cpu',
         num_nodes=1,
         logger=TensorBoardLogger(
             save_dir=log_dir),
@@ -530,15 +528,14 @@ if __name__ == "__main__":
     # objective_func(sample_config)
     # objective_torch_trainer(sample_config)
 
-    # debug_torch(num_samples=10, num_epochs=4, exp_name="debug_torch_transform")
+    debug_bohb(num_samples=10, num_epochs=4, exp_name=args.exp_name)
 
     # Start training Main
-    if args.smoke_test:
-        print("Smoketesting...")
-        tune_func_torch_trainer(num_samples=2, num_epochs=4, exp_name=args.exp_name)
-    else:
-        tune_func_torch_trainer(num_samples=150, num_epochs=4, exp_name=args.exp_name)
-
+    # if args.smoke_test:
+    #     print("Smoketesting...")
+    #     tune_func_torch_trainer(num_samples=2, num_epochs=4, exp_name=args.exp_name)
+    # else:
+    #     tune_func_torch_trainer(num_samples=150, num_epochs=4, exp_name=args.exp_name)
 
     # if args.smoke_test:
     #     print("Smoketesting...")
