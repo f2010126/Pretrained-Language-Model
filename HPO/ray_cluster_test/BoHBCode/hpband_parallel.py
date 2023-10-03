@@ -17,7 +17,6 @@ import time
 
 logger = multiprocessing.log_to_stderr()
 
-
 try:
     import torch
     import torch.utils.data
@@ -38,11 +37,12 @@ except ImportError:
     from train_module import PLMTransformer, GLUETransformer
 
 
-def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **kwargs):
-    super().__init__(*args, **kwargs)
-    self.data_dir = data_dir
-    self.log_dir = log_dir
-    self.task = task_name
+class PyTorchWorker(Worker):
+    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.data_dir = data_dir
+        self.log_dir = log_dir
+        self.task = task_name
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
@@ -67,7 +67,8 @@ def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **k
         trial_id = str(uuid.uuid4().hex)[:5]
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
-        print(f"trial run logged at ------> {log_dir}, working dir: {working_directory}, hpo working dir: {hpo_working_directory}")
+        print(
+            f"trial run logged at ------> {log_dir}, working dir: {working_directory}, hpo working dir: {hpo_working_directory}")
         # make the shared directory
         trainer = Trainer(
             max_epochs=int(budget),
@@ -150,7 +151,7 @@ def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **k
                                                                 log=True)
         eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3,
                                                                log=True)
-        cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu,max_seq_length])
+        cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu, max_seq_length])
         model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
                                                            ["bert-base-uncased", "bert-base-multilingual-cased",
                                                             "deepset/bert-base-german-cased-oldvocab",
@@ -172,11 +173,11 @@ def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **k
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
                                                        ['linear_with_warmup', 'cosine_with_warmup',
                                                         'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
-                                                        'polynomial_decay_with_warmup','constant_with_warmup'])
+                                                        'polynomial_decay_with_warmup', 'constant_with_warmup'])
 
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
         warmup_steps = CSH.UniformIntegerHyperparameter('warmup_steps', lower=10, upper=1000, log=True)
-        cs.add_hyperparameters([scheduler_name,weight_decay, warmup_steps])
+        cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
         gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=2, upper=16,
@@ -203,20 +204,23 @@ if __name__ == "__main__":
     parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.')
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.')
+    parser.add_argument("--task-name", type=str, default="sentilex")
 
     args = parser.parse_args()
 
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
+    # make the shared directory store working dir as env variable
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
-    # make the shared directory
     os.makedirs(working_dir, exist_ok=True)
-    # store working dir as env variable
     os.environ['HPO_WORKING_DIR'] = working_dir
+    data_path = os.path.join(os.getcwd(), "tokenized_data")
+    os.makedirs(data_path, exist_ok=True)
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = PyTorchWorker(run_id=args.run_id, host=host, timeout=6000, )
+        w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
+                          run_id=args.run_id,host=host, timeout=6000, )
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
@@ -231,8 +235,10 @@ if __name__ == "__main__":
     # not plock!
     # comment out for now.
 
-    w = PyTorchWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=6000)
-    w.run(background=True)
+    w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
+                      run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
+                      timeout=6000)
+    w.run(background=False)
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
