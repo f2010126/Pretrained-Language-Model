@@ -220,7 +220,7 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id,host=host, timeout=6000, )
+                          run_id=args.run_id, host=host, timeout=6000, )
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
                       run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
                       timeout=6000)
-    w.run(background=False)
+    w.run(background=True)
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
