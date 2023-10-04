@@ -52,8 +52,6 @@ class PyTorchWorker(Worker):
             logging.debug("CUDA not available, using CPU")
 
         seed_everything(0)
-        data_dir = os.environ.get('DATADIR', os.path.join(os.getcwd(), "tokenised_data"))
-        hpo_working_directory = os.environ.get('HPO_WORKING_DIR', os.getcwd())
 
         # set up data and model
         dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
@@ -68,14 +66,14 @@ class PyTorchWorker(Worker):
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
         print(
-            f"trial run logged at ------> {log_dir}, working dir: {working_directory}, hpo working dir: {hpo_working_directory}")
+            f"trial run logged at ------> {log_dir}, working dir: {working_directory}")
         # make the shared directory
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp_spawn",
+            strategy="ddp",
             logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                     TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
@@ -99,13 +97,11 @@ class PyTorchWorker(Worker):
             print(e)
             traceback.print_exc()
 
-        val_acc = trainer.callback_metrics['val_acc_epoch'].item()
-        print(f"From PID {os.getgid()}  Best checkpoint path: {trainer.checkpoint_callback.best_model_path}")
-        print(f" From PID {os.getgid()} Training complete Metrics Epoch Val Acc: {val_acc}")
+        val_acc = 1-trainer.callback_metrics['ptl/val_accuracy'].item()
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': trainer.callback_metrics,
+            'info': {'all_metrics': list(trainer.callback_metrics),
                      }
 
         })
@@ -210,10 +206,11 @@ if __name__ == "__main__":
 
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
-    # make the shared directory store working dir as env variable
+
+    # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
     os.makedirs(working_dir, exist_ok=True)
-    os.environ['HPO_WORKING_DIR'] = working_dir
+    # central location for the datasets
     data_path = os.path.join(os.getcwd(), "tokenized_data")
     os.makedirs(data_path, exist_ok=True)
 

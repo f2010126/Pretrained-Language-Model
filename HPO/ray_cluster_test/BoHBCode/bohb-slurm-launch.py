@@ -17,6 +17,9 @@ NUM_GPUS_PER_NODE = "${NUM_GPUS_PER_NODE}"
 PARTITION_OPTION = "${PARTITION_OPTION}"
 GIVEN_NODE = "${GIVEN_NODE}"
 
+TASK = "DATASET_TO_OPTIMSE"
+SAMPLE = "NUMMER_TRIALS"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -46,6 +49,10 @@ if __name__ == "__main__":
         "-p",
         type=str,
     )
+    # Args related to the underlying python Script
+    parser.add_argument("--task-name",
+                        "-t", type=str, default="sentilex", help="Name of the dataset to use")
+    parser.add_argument("--num-trials", type=int, default=10, help="Number of times BOHB should sample the space")
 
     args = parser.parse_args()
 
@@ -55,11 +62,13 @@ if __name__ == "__main__":
     else:
         node_info = ""
 
-    job_name = "{}".format(args.exp_name )
+    job_name = "{}_{}_trials".format(args.exp_name, args.num_trials)
 
     partition_option = (
         "#SBATCH --partition={}".format(args.partition) if args.partition else ""
     )
+    task = "{}".format(args.task_name)
+    trial_count = "{}".format(args.num_trials)
 
     # ===== Modified the template script =====
     with open(template_file, "r") as f:
@@ -74,6 +83,9 @@ if __name__ == "__main__":
         "# THIS FILE IS MODIFIED AUTOMATICALLY FROM TEMPLATE AND SHOULD BE "
         "RUNNABLE!",
     )
+    # Python Script related
+    text = text.replace(TASK, task)
+    text = text.replace(SAMPLE, trial_count)
 
     # ===== Save the script =====
     script_file = "{}.sh".format(job_name)
@@ -89,4 +101,5 @@ if __name__ == "__main__":
         )
     )
     print("You can check the status of your job by 'squeue -u <username>'.")
+    sys.exit(0)
     sys.exit(0)
