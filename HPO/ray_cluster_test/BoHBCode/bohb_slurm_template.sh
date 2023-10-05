@@ -15,7 +15,7 @@ ${GIVEN_NODE}
 #SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}_Main.out
 #SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}_Main.error
 
-#SBATCH --time=00:45:00
+#SBATCH --time=RUN_FORREST_RUN
 
 
 echo "Activate environment for Job ID $SLURM_JOB_ID"

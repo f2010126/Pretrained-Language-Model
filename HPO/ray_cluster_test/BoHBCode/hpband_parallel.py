@@ -14,6 +14,8 @@ from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 import argparse
 import time
+import hpbandster.core.nameserver as hpns
+import hpbandster.core.result as hpres
 
 logger = multiprocessing.log_to_stderr()
 
@@ -65,9 +67,8 @@ class PyTorchWorker(Worker):
         trial_id = str(uuid.uuid4().hex)[:5]
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
-        print(
-            f"trial run logged at ------> {log_dir}, working dir: {working_directory}")
-        # make the shared directory
+
+
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator="auto",
@@ -79,11 +80,8 @@ class PyTorchWorker(Worker):
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
             enable_progress_bar=False,
-            log_every_n_steps=5,
-            val_check_interval=5,
-            limit_train_batches=30,
-            limit_val_batches=20,
-            limit_test_batches=20,
+            log_every_n_steps=10,
+            val_check_interval=10,
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
             gradient_clip_val=config['max_grad_norm'],
@@ -237,6 +235,12 @@ if __name__ == "__main__":
                       timeout=6000)
     w.run(background=True)
 
+    try:
+        previous_run = hpres.logged_results_to_HBS_result(working_dir)
+    except Exception:
+        print('No prev run')
+        previous_run=None
+
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
     bohb = BOHB(configspace=PyTorchWorker.get_configspace(),
@@ -245,7 +249,8 @@ if __name__ == "__main__":
                 nameserver=ns_host,
                 nameserver_port=ns_port,
                 min_budget=args.min_budget,
-                max_budget=args.max_budget
+                max_budget=args.max_budget,
+                previous_result=None,
                 )
     try:
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)

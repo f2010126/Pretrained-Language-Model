@@ -9,6 +9,7 @@ import sys
 import time
 import os
 from pathlib import Path
+import time
 
 template_file = Path(os.path.abspath(os.path.dirname(__file__))) / "bohb_slurm_template.sh"
 JOB_NAME = "${JOB_NAME}"
@@ -16,9 +17,17 @@ NUM_NODES = "${NUM_NODES}"
 NUM_GPUS_PER_NODE = "${NUM_GPUS_PER_NODE}"
 PARTITION_OPTION = "${PARTITION_OPTION}"
 GIVEN_NODE = "${GIVEN_NODE}"
+RUNTIME = "RUN_FORREST_RUN"
 
 TASK = "DATASET_TO_OPTIMSE"
 SAMPLE = "NUMMER_TRIALS"
+
+def isTimeFormat(input):
+    try:
+        time.strptime(input, '%H:%M:%S')
+        return True
+    except ValueError:
+        raise ValueError("Incorrect data format, should be HH:MM:SS")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -53,7 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--task-name",
                         "-t", type=str, default="sentilex", help="Name of the dataset to use")
     parser.add_argument("--num-trials", type=int, default=10, help="Number of times BOHB should sample the space")
-
+    parser.add_argument("--runtime", type=str, default='10:10:00', help="Run the experiment for a certain time")
     args = parser.parse_args()
 
     if args.node:
@@ -70,6 +79,10 @@ if __name__ == "__main__":
     task = "{}".format(args.task_name)
     trial_count = "{}".format(args.num_trials)
 
+    if isTimeFormat(args.runtime):
+        runtime = args.runtime
+
+
     # ===== Modified the template script =====
     with open(template_file, "r") as f:
         text = f.read()
@@ -83,6 +96,7 @@ if __name__ == "__main__":
         "# THIS FILE IS MODIFIED AUTOMATICALLY FROM TEMPLATE AND SHOULD BE "
         "RUNNABLE!",
     )
+    text = text.replace(RUNTIME, runtime)
     # Python Script related
     text = text.replace(TASK, task)
     text = text.replace(SAMPLE, trial_count)
