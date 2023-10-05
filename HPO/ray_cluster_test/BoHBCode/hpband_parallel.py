@@ -64,8 +64,11 @@ class PyTorchWorker(Worker):
         model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
+
+        # set up logger
         trial_id = str(uuid.uuid4().hex)[:5]
-        log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/run_{trial_id}")
+        folder_name = config['model_name_or_path'].split("/")[-1] # last part is usually the model name
+        log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/{folder_name}/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
 
 
@@ -74,14 +77,15 @@ class PyTorchWorker(Worker):
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp",
+            strategy="ddp", # change to ddp_spawn when in interactive mode
             logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                     TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
-            enable_progress_bar=False,
             log_every_n_steps=10,
             val_check_interval=10,
+            enable_progress_bar=False,
+
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
             gradient_clip_val=config['max_grad_norm'],
@@ -140,11 +144,9 @@ class PyTorchWorker(Worker):
 }
         """
         # Dataset related
-        max_seq_length = CSH.UniformIntegerHyperparameter('max_seq_length', lower=32, upper=512, log=True)
-        train_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_train_batch_size', lower=2, upper=3,
-                                                                log=True)
-        eval_batch_size_gpu = CSH.UniformIntegerHyperparameter('per_device_eval_batch_size', lower=2, upper=3,
-                                                               log=True)
+        max_seq_length = CSH.CategoricalHyperparameter('max_seq_length',choices=[128, 256, 512])
+        train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4,8,16])
+        eval_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_eval_batch_size', choices=[4,8,16])
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu, max_seq_length])
         model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
                                                            ["bert-base-uncased", "bert-base-multilingual-cased",
@@ -170,15 +172,13 @@ class PyTorchWorker(Worker):
                                                         'polynomial_decay_with_warmup', 'constant_with_warmup'])
 
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
-        warmup_steps = CSH.UniformIntegerHyperparameter('warmup_steps', lower=10, upper=1000, log=True)
+        warmup_steps = CSH.CategoricalHyperparameter('warmup_steps', choices=[10, 100, 500])
         cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
-        gradient_accumulation_steps = CSH.UniformIntegerHyperparameter('gradient_accumulation_steps', lower=2, upper=16,
-                                                                       log=True)
+        gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps', choices=[1, 4, 8, 16])
         max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
         gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
-
         cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps, max_grad_norm, gradient_clip_algorithm])
         return cs
 
@@ -215,7 +215,7 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id, host=host, timeout=6000, )
+                          run_id=args.run_id, host=host, timeout=1000, )
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
                       run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=6000)
+                      timeout=1000)
     w.run(background=True)
 
     try:
