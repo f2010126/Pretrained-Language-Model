@@ -5,11 +5,11 @@ import evaluate
 import torch
 import torchmetrics
 from pytorch_lightning import LightningModule
+from statistics import mean
 from torch.optim import Adam, AdamW
 from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, \
     get_polynomial_decay_schedule_with_warmup, get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup, \
     get_cosine_with_hard_restarts_schedule_with_warmup, get_inverse_sqrt_schedule
-
 
 
 class GLUETransformer(LightningModule):
@@ -178,8 +178,13 @@ class PLMTransformer(LightningModule):
         labels = batch["labels"]
 
         acc = self.accuracy(preds, labels)
-        f1 = self.train_f1(preds, labels)
-        bal_acc = self.train_bal_acc(preds, labels)
+        self.train_f1.add_batch(predictions=preds, references=labels)
+        self.train_acc.add_batch(predictions=preds, references=labels)
+        self.train_bal_acc.add_batch(predictions=preds, references=labels)
+        f1 = self.train_f1.compute(average='weighted')['f1']
+        bal_acc = self.train_bal_acc.compute()['balanced_accuracy']
+        train_acc = self.train_acc.compute()['accuracy']
+        print(f"--------->acc: {train_acc}, f1: {f1}, bal_acc: {bal_acc}")
 
         self.log(f'{stage}_acc', acc, prog_bar=True, sync_dist=True, on_step=True)
         self.log(f'{stage}_loss', loss, prog_bar=True, sync_dist=True, on_step=True)
@@ -193,7 +198,7 @@ class PLMTransformer(LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
         result = self.evaluate_step(batch, batch_idx, stage='val')
         self.validation_step_outputs.append({"val_loss": result["loss"], "val_accuracy": result["accuracy"],
-                                            "val_f1": result["f1"], "val_bal_acc": result["bal_acc"]})
+                                             "val_f1": result["f1"], "val_bal_acc": result["bal_acc"]})
         return result
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
@@ -203,13 +208,14 @@ class PLMTransformer(LightningModule):
         outputs = self.validation_step_outputs
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
-        avg_f1 = torch.stack([x["val_f1"] for x in outputs]).mean()
-        avg_bal_acc = torch.stack([x["val_bal_acc"] for x in outputs]).mean()
+        avg_f1 = mean([x["val_f1"] for x in outputs])
+        avg_bal_acc = mean([x["val_bal_acc"] for x in outputs])
 
         self.log("ptl/val_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("ptl/val_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("ptl/val_f1", avg_f1, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        self.log("ptl/val_bal_acc", avg_bal_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/val_bal_acc", avg_bal_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True,
+                 sync_dist=True)
         logging.debug("on_validation_epoch_end--->")
         return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1, "bal_acc": avg_bal_acc}
 
@@ -255,7 +261,7 @@ class PLMTransformer(LightningModule):
                 num_training_steps=self.trainer.estimated_stepping_batches,
             )
         elif self.scheduler_name == "cosine_with_warmup":
-            scheduler= get_cosine_schedule_with_warmup(
+            scheduler = get_cosine_schedule_with_warmup(
                 optimizer,
                 num_warmup_steps=self.config['warmup_steps'],
                 num_training_steps=self.trainer.estimated_stepping_batches,

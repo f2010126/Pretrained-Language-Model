@@ -1,21 +1,21 @@
+import argparse
 import logging
 import multiprocessing
 import os
 import pickle
+import sys
+import time
 import traceback
 import uuid
-import sys
+
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 import hpbandster.core.nameserver as hpns
+import hpbandster.core.result as hpres
 from hpbandster.core.worker import Worker
 from hpbandster.optimizers import BOHB as BOHB
 from pytorch_lightning import seed_everything, Trainer
-from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
-import argparse
-import time
-import hpbandster.core.nameserver as hpns
-import hpbandster.core.result as hpres
+from pytorch_lightning.loggers import TensorBoardLogger
 
 logger = multiprocessing.log_to_stderr()
 
@@ -67,25 +67,27 @@ class PyTorchWorker(Worker):
 
         # set up logger
         trial_id = str(uuid.uuid4().hex)[:5]
-        folder_name = config['model_name_or_path'].split("/")[-1] # last part is usually the model name
+        folder_name = config['model_name_or_path'].split("/")[-1]  # last part is usually the model name
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/{folder_name}/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
-
 
         trainer = Trainer(
             max_epochs=int(budget),
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp", # change to ddp_spawn when in interactive mode
-            logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
-                    TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
+            strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
+            logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
             log_every_n_steps=10,
             val_check_interval=10,
-            enable_progress_bar=False,
+            enable_progress_bar=True,
+            enable_checkpointing=False,
 
+            limit_test_batches=10,
+            limit_val_batches=10,
+            limit_train_batches=20,
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
             gradient_clip_val=config['max_grad_norm'],
@@ -99,7 +101,7 @@ class PyTorchWorker(Worker):
             print(e)
             traceback.print_exc()
 
-        val_acc = 1-trainer.callback_metrics['ptl/val_accuracy'].item()
+        val_acc = 1 - trainer.callback_metrics['ptl/val_accuracy'].item()
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
@@ -144,9 +146,9 @@ class PyTorchWorker(Worker):
 }
         """
         # Dataset related
-        max_seq_length = CSH.CategoricalHyperparameter('max_seq_length',choices=[128, 256, 512])
-        train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4,8,16])
-        eval_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_eval_batch_size', choices=[4,8,16])
+        max_seq_length = CSH.CategoricalHyperparameter('max_seq_length', choices=[128, 256, 512])
+        train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4, 8, 16])
+        eval_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_eval_batch_size', choices=[4, 8, 16])
         cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu, max_seq_length])
         model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
                                                            ["bert-base-uncased", "bert-base-multilingual-cased",
@@ -176,7 +178,8 @@ class PyTorchWorker(Worker):
         cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
 
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
-        gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps', choices=[1, 4, 8, 16])
+        gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
+                                                                    choices=[1, 4, 8, 16])
         max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
         gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
         cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps, max_grad_norm, gradient_clip_algorithm])
@@ -239,7 +242,7 @@ if __name__ == "__main__":
         previous_run = hpres.logged_results_to_HBS_result(working_dir)
     except Exception:
         print('No prev run')
-        previous_run=None
+        previous_run = None
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
@@ -276,6 +279,23 @@ if __name__ == "__main__":
 
     id2config = res.get_id2config_mapping()
     incumbent = res.get_incumbent_id()
+
+    config = {"model_name_or_path": "bert-base-uncased",
+              "learning_rate": 2.5e-5,
+              "weight_decay": 0.01,
+              "adam_epsilon": 1e-8,
+              "warmup_steps": 0,
+              "per_device_train_batch_size": 16,
+              "per_device_eval_batch_size": 16,
+              "gradient_accumulation_steps": 1,
+              "num_train_epochs": 3,
+              "max_steps": -1,
+              "max_grad_norm": 1.0,
+              "scheduler_name": "linear_with_warmup",
+              "optimizer_name": "AdamW",
+              "max_seq_length": 128,
+              "gradient_clip_algorithm": "norm",
+              "sgd_momentum": 0.9, }
 
     print('Best found configuration:', id2config[incumbent]['config'])
     print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
