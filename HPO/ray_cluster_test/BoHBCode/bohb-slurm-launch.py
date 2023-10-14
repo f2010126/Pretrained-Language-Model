@@ -21,6 +21,7 @@ RUNTIME = "RUN_FORREST_RUN"
 
 TASK = "DATASET_TO_OPTIMSE"
 SAMPLE = "NUMMER_TRIALS"
+WORKERS = "NUM_WORKERS"
 
 def isTimeFormat(input):
     try:
@@ -63,6 +64,8 @@ if __name__ == "__main__":
                         "-t", type=str, default="sentilex", help="Name of the dataset to use")
     parser.add_argument("--num-trials", type=int, default=10, help="Number of times BOHB should sample the space")
     parser.add_argument("--runtime", type=str, default='10:10:00', help="Run the experiment for a certain time")
+    parser.add_argument("--n_workers", type=int, default=2, help="Number of parallel workers to use")
+
     args = parser.parse_args()
 
     if args.node:
@@ -78,6 +81,7 @@ if __name__ == "__main__":
     )
     task = "{}".format(args.task_name)
     trial_count = "{}".format(args.num_trials)
+    num_workers = "{}".format(args.n_workers)
 
     if isTimeFormat(args.runtime):
         runtime = args.runtime
@@ -100,6 +104,7 @@ if __name__ == "__main__":
     # Python Script related
     text = text.replace(TASK, task)
     text = text.replace(SAMPLE, trial_count)
+    text = text.replace(WORKERS, num_workers)
 
     # ===== Save the script =====
     script_file = "{}.sh".format(job_name)

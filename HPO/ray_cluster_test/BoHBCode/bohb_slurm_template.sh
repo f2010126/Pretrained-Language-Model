@@ -36,7 +36,7 @@ node_1=${nodes_array[0]}
 
 echo "STARTING HEAD at $node_1"
 srun --nodes=1 --ntasks=1 -w "$node_1" \
-python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory datasetruns --task-name DATASET_TO_OPTIMSE --n_iterations NUMMER_TRIALS &
+python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory datasetruns --task-name DATASET_TO_OPTIMSE --n_iterations NUMMER_TRIALS --n_workers NUM_WORKERS &
 
 echo " Wait 60s before STARTING WORKERS"
 sleep 60
@@ -46,7 +46,7 @@ for ((i = 1; i <= worker_num; i++)); do
   node_i=${nodes_array[$i]}
   echo "STARTING WORKER $i at $node_i"
   srun --nodes=1 --ntasks=1 -w "$node_i" \
-  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory datasetruns --task-name DATASET_TO_OPTIMSE --n_iterations NUMMER_TRIALS --worker &
+  python3 hpband_parallel.py --run_id ${SLURM_JOB_NAME} --nic_name eth0 --shared_directory datasetruns --task-name DATASET_TO_OPTIMSE --n_iterations NUMMER_TRIALS --n_workers NUM_WORKERS --worker &
   sleep 20
 done
 wait

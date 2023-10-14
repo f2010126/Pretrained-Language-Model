@@ -136,6 +136,7 @@ class PLMTransformer(LightningModule):
 
         # access validation outputs, save them in-memory as instance attributes
         self.validation_step_outputs = []
+        self.training_step_outputs = []
 
         self.task = 'binary' if num_labels == 2 else 'multiclass'
         self.config = config
@@ -184,7 +185,6 @@ class PLMTransformer(LightningModule):
         f1 = self.train_f1.compute(average='weighted')['f1']
         bal_acc = self.train_bal_acc.compute()['balanced_accuracy']
         train_acc = self.train_acc.compute()['accuracy']
-        print(f"--------->acc: {train_acc}, f1: {f1}, bal_acc: {bal_acc}")
 
         self.log(f'{stage}_acc', acc, prog_bar=True, sync_dist=True, on_step=True)
         self.log(f'{stage}_loss', loss, prog_bar=True, sync_dist=True, on_step=True)
@@ -192,8 +192,12 @@ class PLMTransformer(LightningModule):
         self.log(f'{stage}_bal_acc', bal_acc, prog_bar=True, sync_dist=True, on_step=True)
         return {f"loss": loss, f"accuracy": acc, f"f1": f1, f"bal_acc": bal_acc}
 
-    def training_step(self, batch, batch_idx):
-        return self.evaluate_step(batch, batch_idx, stage='train')
+    def training_step(self, batch, batch_idx, dataloader_idx=0, print_str="train"):
+        result = self.evaluate_step(batch, batch_idx, stage='train')
+        self.training_step_outputs.append({"train_loss": result["loss"], "train_accuracy": result["accuracy"],
+                                           "train_f1": result["f1"], "train_bal_acc": result["bal_acc"]})
+
+        return result
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
         result = self.evaluate_step(batch, batch_idx, stage='val')
@@ -203,6 +207,22 @@ class PLMTransformer(LightningModule):
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         return self.evaluate_step(batch, batch_idx, stage='test')
+
+    def on_train_epoch_end(self):
+        outputs = self.training_step_outputs
+        avg_loss = torch.stack([x["train_loss"] for x in outputs]).mean()
+        avg_acc = torch.stack([x["train_accuracy"] for x in outputs]).mean()
+        avg_f1 = mean([x["train_f1"] for x in outputs])
+        avg_bal_acc = mean([x["train_bal_acc"] for x in outputs])
+
+        self.log("ptl/train_loss", avg_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/train_accuracy", avg_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True,
+                 sync_dist=True)
+        self.log("ptl/train_f1", avg_f1, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log("ptl/train_bal_acc", avg_bal_acc, on_step=False, on_epoch=True, prog_bar=True, logger=True,
+                 sync_dist=True)
+
+        return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1, "bal_acc": avg_bal_acc}
 
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs

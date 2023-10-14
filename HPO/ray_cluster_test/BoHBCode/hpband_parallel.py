@@ -15,7 +15,7 @@ import hpbandster.core.result as hpres
 from hpbandster.core.worker import Worker
 from hpbandster.optimizers import BOHB as BOHB
 from pytorch_lightning import seed_everything, Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 
 logger = multiprocessing.log_to_stderr()
 
@@ -53,7 +53,7 @@ class PyTorchWorker(Worker):
         else:
             logging.debug("CUDA not available, using CPU")
 
-        seed_everything(0)
+        seed_everything(9)
 
         # set up data and model
         dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
@@ -76,18 +76,14 @@ class PyTorchWorker(Worker):
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
-            logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
+            strategy="ddp",  # change to ddp_spawn when in interactive mode
+            logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
+                    CSVLogger(save_dir=log_dir, name="csv_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
             log_every_n_steps=10,
             val_check_interval=10,
-            enable_progress_bar=True,
             enable_checkpointing=False,
-
-            limit_test_batches=10,
-            limit_val_batches=10,
-            limit_train_batches=20,
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
             gradient_clip_val=config['max_grad_norm'],
@@ -189,7 +185,7 @@ class PyTorchWorker(Worker):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=3)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
                         default=4)  # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
@@ -223,6 +219,9 @@ if __name__ == "__main__":
         w.run(background=False)
         exit(0)
 
+    # ensure the file is empty, init the config and results json
+    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=True)
+
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
     NS = hpns.NameServer(run_id=args.run_id, host=host, port=0, working_directory=working_dir)
@@ -254,6 +253,7 @@ if __name__ == "__main__":
                 min_budget=args.min_budget,
                 max_budget=args.max_budget,
                 previous_result=None,
+                result_logger=result_logger,
                 )
     try:
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
@@ -279,23 +279,6 @@ if __name__ == "__main__":
 
     id2config = res.get_id2config_mapping()
     incumbent = res.get_incumbent_id()
-
-    config = {"model_name_or_path": "bert-base-uncased",
-              "learning_rate": 2.5e-5,
-              "weight_decay": 0.01,
-              "adam_epsilon": 1e-8,
-              "warmup_steps": 0,
-              "per_device_train_batch_size": 16,
-              "per_device_eval_batch_size": 16,
-              "gradient_accumulation_steps": 1,
-              "num_train_epochs": 3,
-              "max_steps": -1,
-              "max_grad_norm": 1.0,
-              "scheduler_name": "linear_with_warmup",
-              "optimizer_name": "AdamW",
-              "max_seq_length": 128,
-              "gradient_clip_algorithm": "norm",
-              "sgd_momentum": 0.9, }
 
     print('Best found configuration:', id2config[incumbent]['config'])
     print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
