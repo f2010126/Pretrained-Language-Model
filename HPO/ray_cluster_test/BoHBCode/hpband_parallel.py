@@ -220,7 +220,7 @@ if __name__ == "__main__":
         exit(0)
 
     # ensure the file is empty, init the config and results json
-    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=True)
+    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=False)
 
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
