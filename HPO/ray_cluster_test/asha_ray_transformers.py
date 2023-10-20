@@ -22,21 +22,18 @@ from ray.train.lightning import (
 )
 from ray.train.torch import TorchTrainer
 from ray.tune import Callback
-from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
-from ray.tune.search.bohb import TuneBOHB
 from ray.tune.experiment import Trial
+from ray.tune.schedulers import ASHAScheduler
 
 # local changes
 logger = multiprocessing.log_to_stderr()
 # local imports
 try:
+    from HPO.ray_cluster_test.BoHBCode.data_modules import Omp, get_datamodule
+    from HPO.ray_cluster_test.BoHBCode.train_module import PLMTransformer
+except ImportError:
     from BoHBCode.data_modules import Omp, get_datamodule
     from BoHBCode.train_module import PLMTransformer
-    from asha_ray_transformers import trial_dir_name
-except ImportError:
-    from .BoHBCode.data_modules import Omp, get_datamodule
-    from .BoHBCode.train_module import PLMTransformer
-    from .asha_ray_transformers import trial_dir_name
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 hpo_config = {
@@ -55,12 +52,12 @@ hpo_config = {
     'weight_decay': tune.loguniform(1e-5, 1e-3),
     'adam_epsilon': tune.loguniform(1e-8, 1e-6),
     'sgd_momentum': tune.loguniform(0.8, 0.99),
-    'warmup_steps': tune.choice([0, 100, 1000]),
+    'warmup_steps': tune.choice([100, 500, 1000]),
     'per_device_train_batch_size': tune.choice([2, 4, 8]),
     'per_device_eval_batch_size': tune.choice([2, 4, 8]),
     'gradient_accumulation_steps': tune.choice([2, 4, 8]),
     'max_steps': tune.choice([-1, 100, 1000]),
-    'max_grad_norm': tune.choice([0.0, 1.0, 2.0]),
+    'max_grad_norm': tune.choice([1.0, 2.0]),
     'seed': tune.choice([42, 1234, 2021]),
     'max_seq_length': tune.choice([128, 256, 512]),
     "num_epochs": tune.choice([2, 3, 4]),
@@ -70,7 +67,7 @@ hpo_config = {
 
 class MyCallback(Callback):
     def on_trial_result(self, iteration, trials, trial, result, **info):
-        print(f"Got result: {result['ptl/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
+        print(f"Got result: {result['metrics/val_accuracy']} for {trial.trainable_name} with config {trial.config}")
 
     def on_trial_error(
             self, iteration: int, trials: List["Trial"], trial: "Trial", **info
@@ -121,8 +118,7 @@ def objective_torch_trainer(config):
     print("Finished obj")
 
 
-# BOHB LOOP
-def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
+def torch_trainer_asha(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
     if torch.cuda.is_available():
         use_gpu = True
         # each Trainer gets that.
@@ -137,8 +133,8 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
             num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
         )
 
-    # train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
-    #                                                 data_dir=os.path.join(os.getcwd(), "tokenized_data"))
+    train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
+                                                    data_dir=os.path.join(os.getcwd(), "tokenized_data"))
     ray_trainer = TorchTrainer(
         objective_torch_trainer,
         scaling_config=scaling_config,
@@ -153,41 +149,31 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
 
     max_iterations = 3
     # scheduler
-    bohb_hyperband = HyperBandForBOHB(
-        time_attr="training_iteration",
-        max_t=max_iterations,  # max time per trial? max length of time a trial
-        reduction_factor=2,  # cut down trials by factor of?
-        stop_last_trials=True,
-        # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
+    asha_scheduler = ASHAScheduler(
+        time_attr='training_iteration',
+        metric="metrics/val_accuracy",
+        mode='max',
+        max_t=5,
+        grace_period=3,
+        reduction_factor=3,
+        brackets=1,
     )
-
-    # search Algo
-    bohb_search = TuneBOHB(
-        # space=config_space,  # If you want to set the space manually
-    )
-    # Number of parallel runs allowed
-    bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
 
     if tune.Tuner.can_restore(restore_path):
         print("Restoring from checkpoint---->")
         tuner = tune.Tuner.restore(restore_path,
                                    trainable=ray_trainer,
-                                   # resume_unfinished=True,
+                                   resume_unfinished=True,
                                    resume_errored=True,
                                    restart_errored=False,
-                                   # param_space={"train_loop_config": hpo_config},
+                                   param_space={"train_loop_config": hpo_config},
                                    )
     else:
         tuner = tune.Tuner(ray_trainer,
                            tune_config=tune.TuneConfig(
-                               metric="ptl/val_accuracy",
-                               mode="max",
-                               scheduler=bohb_hyperband,
-                               search_alg=bohb_search,
+                               scheduler=asha_scheduler,
                                reuse_actors=False,
                                num_samples=num_trials,
-                               trial_name_creator=trial_dir_name,
-                               trial_dirname_creator=trial_dir_name,
                            ),
                            run_config=ray.train.RunConfig(
                                name=exp_name,
@@ -196,7 +182,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                log_to_file=True,
                                checkpoint_config=ray.train.CheckpointConfig(
                                    num_to_keep=3,
-                                   checkpoint_score_attribute="ptl/val_accuracy",
+                                   checkpoint_score_attribute="metrics/val_accuracy",
                                    checkpoint_score_order="max",
                                ),
                            ),
@@ -207,7 +193,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
 
     try:
         results = tuner.fit()
-        best_result = results.get_best_result(metric="ptl/val_accuracy", mode="max")
+        best_result = results.get_best_result(metric="metrics/val_accuracy", mode="max")
         print("Best hyperparameters found were: ", best_result.config)
     except ray.exceptions.RayTaskError:
         print("User function raised an exception!")
@@ -244,38 +230,40 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args, _ = parse_args()
+    # args, _ = parse_args()
+    #
+    # if args.server_address:
+    #     context = ray.init(f"ray://{args.server_address}")
+    # elif args.ray_address:
+    #     context = ray.init(address=args.ray_address)
+    # elif args.smoke_test:
+    #     context = ray.init()
+    # else:
+    #     context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
+    #
+    # print("Dashboard URL: http://{}".format(context.dashboard_url))
 
-    if args.server_address:
-        context = ray.init(f"ray://{args.server_address}")
-    elif args.ray_address:
-        context = ray.init(address=args.ray_address)
-    elif args.smoke_test:
-        context = ray.init()
-    else:
-        context = ray.init(address='auto', _redis_password=os.environ['redis_password'])
-
-    print("Dashboard URL: http://{}".format(context.dashboard_url))
-
-    # parser = argparse.ArgumentParser(description="Tune on local")
-    # parser.add_argument(
-    #     "--smoke-test", action="store_true", help="Finish quickly for testing")  # store_false will default to True
-    # parser.add_argument("--exp-name", type=str, default="local_tune_bohb10")
-    # args, _ = parser.parse_known_args()
-    os.environ['DATADIR'] = str(os.path.join(os.getcwd(), "tokenized_data"))
-    print(f"DATADIR in main is -----> {os.environ['DATADIR']}")
+    parser = argparse.ArgumentParser(description="Tune on local")
+    parser.add_argument(
+        "--smoke-test", action="store_false", help="Finish quickly for testing")  # store_false will default to True
+    parser.add_argument("--exp-name", type=str, default="local_tune_asha10")
+    parser.add_argument("--task-name", type=str, default='omp')
+    parser.add_argument("--num-trials", type=int, default=3)
+    parser.add_argument("--num-gpu", type=int, default=0, help="Number of distributed workers per trial")
+    args, _ = parser.parse_known_args()
 
     if not torch.cuda.is_available():
         args.exp_name = args.exp_name + "_cpu"
         args.num_gpu = 0
+        args.smoke_test = True
 
     if args.smoke_test:
         print("Running smoke test")
         args.exp_name = args.exp_name + "_smoke"
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=3,
+        torch_trainer_asha(gpus_per_trial=args.num_gpu, num_trials=3,
                            exp_name=args.exp_name, task_name=args.task_name)
     else:
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
+        torch_trainer_asha(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
                            exp_name=args.exp_name, task_name=args.task_name)
 
     print("END OF MAIN SCRIPT")

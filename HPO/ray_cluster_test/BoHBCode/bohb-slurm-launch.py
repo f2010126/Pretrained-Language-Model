@@ -23,12 +23,14 @@ TASK = "DATASET_TO_OPTIMSE"
 SAMPLE = "NUMMER_TRIALS"
 WORKERS = "NUM_WORKERS"
 
+
 def isTimeFormat(input):
     try:
         time.strptime(input, '%H:%M:%S')
         return True
     except ValueError:
         raise ValueError("Incorrect data format, should be HH:MM:SS")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -85,7 +87,6 @@ if __name__ == "__main__":
 
     if isTimeFormat(args.runtime):
         runtime = args.runtime
-
 
     # ===== Modified the template script =====
     with open(template_file, "r") as f:

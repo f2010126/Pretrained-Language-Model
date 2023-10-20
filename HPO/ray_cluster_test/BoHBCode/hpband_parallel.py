@@ -40,11 +40,12 @@ except ImportError:
 
 
 class PyTorchWorker(Worker):
-    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **kwargs):
+    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", seed=0, **kwargs):
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir
         self.log_dir = log_dir
         self.task = task_name
+        self.seed = seed
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
@@ -53,7 +54,7 @@ class PyTorchWorker(Worker):
         else:
             logging.debug("CUDA not available, using CPU")
 
-        seed_everything(9)
+        seed_everything(self.seed)
 
         # set up data and model
         dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
@@ -80,7 +81,7 @@ class PyTorchWorker(Worker):
             logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
                     CSVLogger(save_dir=log_dir, name="csv_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
-            num_sanity_val_steps=1,
+
             log_every_n_steps=10,
             val_check_interval=10,
             enable_checkpointing=False,
@@ -97,7 +98,7 @@ class PyTorchWorker(Worker):
             print(e)
             traceback.print_exc()
 
-        val_acc = 1 - trainer.callback_metrics['ptl/val_accuracy'].item()
+        val_acc = 1 - trainer.callback_metrics['metrics/val_accuracy'].item()
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
@@ -198,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.')
     parser.add_argument("--task-name", type=str, default="sentilex")
+    parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
 
     args = parser.parse_args()
 
