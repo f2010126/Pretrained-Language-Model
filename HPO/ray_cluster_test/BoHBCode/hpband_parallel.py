@@ -98,7 +98,7 @@ class PyTorchWorker(Worker):
             print(e)
             traceback.print_exc()
 
-        val_acc = 1 - trainer.callback_metrics['metrics/val_accuracy'].item()
+        val_acc = 1 - trainer.callback_metrics['val_acc_epoch'].item()
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
@@ -185,8 +185,8 @@ class PyTorchWorker(Worker):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
-    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=2)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=10)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
                         default=4)  # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id, host=host, timeout=1000, )
+                          run_id=args.run_id, host=host, timeout=1000, seed=args.seed)
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
@@ -236,7 +236,7 @@ if __name__ == "__main__":
 
     w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
                       run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=1000)
+                      timeout=1000, seed=args.seed)
     w.run(background=True)
 
     try:
