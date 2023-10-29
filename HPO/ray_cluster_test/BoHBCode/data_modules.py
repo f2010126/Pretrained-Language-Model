@@ -390,7 +390,7 @@ class AmazonMultiReview(DataModule):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
             print("Prepare Data File not exist")
             print(f'Download and Tokenise')
-            dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
+            dataset = datasets.load_dataset(self.task_name, 'de').shuffle()
             dataset = dataset.map(self.clean_data, batched=True)
             dataset = dataset.map(self.encode_batch, batched=True)
             dataset = dataset.rename_column("stars", "labels")
@@ -547,7 +547,7 @@ class Omp(DataModule):
             print("File not exist Prepare data")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'posts_labeled', split='train').shuffle(seed=42)
+            dataset = datasets.load_dataset(self.task_name, 'posts_labeled', split='train').shuffle()
             # 90% train, 10% test + validation
             train_testvalid = dataset.train_test_split(test_size=0.1)
             # Split the 10% test + valid in half test, half valid
@@ -630,7 +630,7 @@ class SentiLex(DataModule):
             print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de', split='train').shuffle(seed=42)
+            dataset = datasets.load_dataset(self.task_name, 'de', split='train').shuffle()
             # 90% train, 10% test + validation
             dataset = dataset.map(self.clean_data, batched=True)
             dataset = dataset.map(self.encode_batch, batched=True)
@@ -711,7 +711,7 @@ class CardiffMultiSentiment(DataModule):
             print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'german').shuffle(seed=42)
+            dataset = datasets.load_dataset(self.task_name, 'german').shuffle()
             dataset = dataset.map(self.clean_data, batched=True)
             dataset = dataset.map(self.encode_batch, batched=True)
             dataset = dataset.rename_column("label", "labels")
@@ -862,7 +862,7 @@ class GermEval2018Coarse(DataModule):
             dataset = datasets.concatenate_datasets([dataset['train'], dataset['test']])
             dataset = dataset.map(self.encode_batch, batched=True)
             # shuffle then split
-            train_test = dataset.shuffle(seed=42).train_test_split(test_size=0.25)
+            train_test = dataset.shuffle().train_test_split(test_size=0.25)
             valid_test = train_test['test'].train_test_split(test_size=0.5)
             dataset = DatasetDict({
                 'train': train_test['train'],
@@ -941,7 +941,7 @@ class GermEval2018Fine(DataModule):
             dataset = datasets.concatenate_datasets([dataset['train'], dataset['test']])
             dataset = dataset.map(self.encode_batch, batched=True)
             # shuffle then split
-            train_test = dataset.shuffle(seed=42).train_test_split(test_size=0.25)
+            train_test = dataset.shuffle().train_test_split(test_size=0.25)
             valid_test = train_test['test'].train_test_split(test_size=0.5)
             dataset = DatasetDict({
                 'train': train_test['train'],
@@ -1018,7 +1018,7 @@ class GNAD10(DataModule):
             print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
+            dataset = datasets.load_dataset(self.task_name, 'de').shuffle()
             # 90% train, 10% test + validation
             dataset = dataset.rename_column("label", "labels")
             dataset = dataset.rename_column("text", "sentence")
@@ -1053,7 +1053,7 @@ class X_Stance(DataModule):
     task_metadata = {
         "num_labels": 9,
         "label_col": "labels",
-        "tokenize_folder_name": "gnad10",
+        "tokenize_folder_name": "x_stance",
     }
 
     loader_columns = [
@@ -1069,7 +1069,7 @@ class X_Stance(DataModule):
     def __init__(
             self,
             model_name_or_path: str,
-            task_name: str = "gnad10",
+            task_name: str = "x_stance",
             max_seq_length: int = 128,
             train_batch_size: int = 32,
             eval_batch_size: int = 32,
@@ -1091,8 +1091,8 @@ class X_Stance(DataModule):
 
     def clean_data(self, example):
         # rename/ combine columns
-        example['sentence'] = example['word']
-        example['labels'] = example['sentiment']
+        example['sentence'] = ["{}. {}".format(title, review) for title, review in
+                               zip(example['question'], example["comment"])]
         return example
 
     def prepare_data(self):
@@ -1101,18 +1101,158 @@ class X_Stance(DataModule):
             print("Prepare Data File not exist")
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
-            # 90% train, 10% test + validation
-            dataset = dataset.rename_column("label", "labels")
-            dataset = dataset.rename_column("text", "sentence")
+            dataset = datasets.load_dataset(self.task_name).shuffle()
+            dataset = dataset.filter(lambda example: example['language'] == 'de')
+            dataset = dataset.map(self.clean_data, batched=True)
             dataset = dataset.map(self.encode_batch, batched=True)
-            train_testvalid = dataset['train'].train_test_split(test_size=0.15)
-            # Split the 10% test + valid in half test, half valid
-            # gather everyone if you want to have a single DatasetDict
-            dataset = DatasetDict({
-                'train': train_testvalid['train'],
-                'test': dataset['test'],
-                'validation': train_testvalid['test']})
+            dataset = dataset.class_encode_column('topic')
+            dataset = dataset.rename_column('topic', "labels")
+            # 90% train, 10% test + validation
+
+            for split in dataset.keys():
+                remove_features = set(dataset[split].features) ^ set(
+                    [self.label_column] + ["input_ids", "attention_mask"])
+                dataset[split] = dataset[split].remove_columns(remove_features)
+                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
+                dataset[split].set_format(type="torch", columns=columns)
+
+            # save the tokenized data to disk
+            try:
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+            except:
+                print("File already exist")
+
+        else:
+            print("File exist in Prepare Data. Load Tokenized data in setup.")
+
+
+class Swiss_Judgement(DataModule):
+    task_metadata = {
+        "num_labels": 2,
+        "label_col": "labels",
+        "tokenize_folder_name": "swiss_judgement",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            model_name_or_path: str,
+            task_name: str = "rcds/swiss_judgment_prediction",
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            encode_columns=None,
+            data_dir='./data',
+            **kwargs,
+    ):
+
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
+        if encode_columns is None:
+            encode_columns = ['text']
+
+        self.label_column = label_column
+        self.encode_columns = encode_columns
+        self.num_labels = self.task_metadata['num_labels']
+
+    def prepare_data(self):
+
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data File not exist")
+            print(f'Download and Tokenise')
+            # load a shuffled version of the dataset
+            dataset = datasets.load_dataset(self.task_name, 'de').shuffle()
+            dataset = dataset.rename_column('text', "sentence")
+            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.map(self.encode_batch, batched=True)
+
+            # 90% train, 10% test + validation
+
+            for split in dataset.keys():
+                remove_features = set(dataset[split].features) ^ set(
+                    [self.label_column] + ["input_ids", "attention_mask"])
+                dataset[split] = dataset[split].remove_columns(remove_features)
+                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
+                dataset[split].set_format(type="torch", columns=columns)
+
+            # save the tokenized data to disk
+            try:
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+            except:
+                print("File already exist")
+
+        else:
+            print("File exist in Prepare Data. Load Tokenized data in setup.")
+
+
+class Miam(DataModule):
+    task_metadata = {
+        "num_labels": 31,
+        "label_col": "labels",
+        "tokenize_folder_name": "miam",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            model_name_or_path: str,
+            task_name: str = "miam",
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            encode_columns=None,
+            data_dir='./data',
+            **kwargs,
+    ):
+
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
+        if encode_columns is None:
+            encode_columns = ['text']
+
+        self.label_column = label_column
+        self.encode_columns = encode_columns
+        self.num_labels = self.task_metadata['num_labels']
+
+    def prepare_data(self):
+
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data File not exist")
+            print(f'Download and Tokenise')
+            # load a shuffled version of the dataset
+            dataset = datasets.load_dataset(self.task_name, 'vm2').shuffle()
+            dataset = dataset.rename_column('Utterance', "sentence")
+            dataset = dataset.rename_column('Label', "labels")
+            dataset = dataset.map(self.encode_batch, batched=True)
+
+            # 90% train, 10% test + validation
+
             for split in dataset.keys():
                 remove_features = set(dataset[split].features) ^ set(
                     [self.label_column] + ["input_ids", "attention_mask"])
@@ -1188,6 +1328,21 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                       max_seq_length=max_seq_length, train_batch_size=train_batch_size,
                       eval_batch_size=eval_batch_size,
                       data_dir=data_dir)
+    elif task_name == "x_stance":
+        return X_Stance(model_name_or_path=model_name_or_path,
+                        max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                        eval_batch_size=eval_batch_size,
+                        data_dir=data_dir)
+    elif task_name == "judgement_prediction":
+        return Swiss_Judgement(model_name_or_path=model_name_or_path,
+                               max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                               eval_batch_size=eval_batch_size,
+                               data_dir=data_dir)
+    elif task_name == "miam":
+        return Miam(model_name_or_path=model_name_or_path,
+                    max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                    eval_batch_size=eval_batch_size,
+                    data_dir=data_dir)
     else:
         print("Task not found")
         raise NotImplementedError
@@ -1195,12 +1350,51 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
-    data_dir = os.path.join(os.getcwd(), "testing_data")
-    for task in ['omp', "germeval2018_fine", "germeval2018_coarse", "gnad10", "mtop_domain",
-                 "cardiff_multi_sentiment", "sentilex", "tyqiangz", "amazon_reviews_multi"]:
-        dm = get_datamodule(task_name=task, model_name_or_path="distilbert-base-uncased",
-                            max_seq_length=156,
-                            train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
-        dm.prepare_data()
-        dm.setup("fit")
-        print(next(iter(dm.val_dataloader())))
+    # data_dir = os.path.join(os.getcwd(), "testing_data")
+    # dm = get_datamodule(task_name="judgement_prediction", model_name_or_path="distilbert-base-uncased",
+    #                     max_seq_length=256,
+    #                     train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
+    # dm.prepare_data()
+    # dm.setup("fit")
+    # print(next(iter(dm.val_dataloader())))
+
+    data_path = os.path.join(os.getcwd(), "tokenized_data")
+    processing_time = []
+    for seq in [128, 256, 512]:
+        for model in ["bert-base-uncased",
+                      "bert-base-multilingual-cased",
+                      "deepset/bert-base-german-cased-oldvocab",
+                      "uklfr/gottbert-base",
+                      "dvm1983/TinyBERT_General_4L_312D_de",
+                      "linhd-postdata/alberti-bert-base-multilingual-cased",
+                      "dbmdz/distilbert-base-german-europeana-cased"]:
+            for task in [# 'omp',
+                         "germeval2018_fine",
+                         "germeval2018_coarse",
+                         "gnad10",
+                         "mtop_domain",
+                         "cardiff_multi_sentiment", "sentilex", "tyqiangz", "amazon_reviews_multi",
+                         "x_stance", "miam", "judgement_prediction"
+                         ]:
+                print(f'Current Combo-----> {task} {model} {seq}')
+                start = time.time()
+                dm = get_datamodule(task_name=task, model_name_or_path=model,
+                                    max_seq_length=seq,
+                                    train_batch_size=32, eval_batch_size=32, data_dir=data_path)
+                dm.prepare_data()
+                dm.setup("fit")
+                end = time.time() - start
+                print(f'{task} {model} {seq} took {end}')
+                processing_time.append({"data":task,
+                                        "model": model,
+                                        "length": seq,
+                                        "time": end})
+
+    # write to file
+    lock = threading.Lock()
+    output_file = os.path.join(os.getcwd(), 'dataset_processing.txt')
+    # open file for appendin
+    with lock:
+        with open(output_file, 'w') as file:
+            # write text to data
+            file.write(str(processing_time))

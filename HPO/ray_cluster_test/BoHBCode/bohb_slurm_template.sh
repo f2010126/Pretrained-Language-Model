@@ -25,6 +25,7 @@ export CUDA_LAUNCH_BLOCKING=1
 export TOKENIZERS_PARALLELISM=False
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export TORCH_SHOW_CPP_STACKTRACES=1
+export HF_DATASETS_CACHE="$(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/HF_Cache"
 source ~/tinybert_nlp/bin/activate
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/BoHBCode
 

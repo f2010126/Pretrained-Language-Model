@@ -7,15 +7,19 @@ import sys
 import time
 import traceback
 import uuid
+import datetime
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
 from hpbandster.core.worker import Worker
+from hpbandster.core.dispatcher import Job
 from hpbandster.optimizers import BOHB as BOHB
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
+from ConfigSpace.read_and_write import json as cs_json
+from pytorch_lightning.strategies import DDPStrategy
 
 logger = multiprocessing.log_to_stderr()
 
@@ -47,7 +51,8 @@ class PyTorchWorker(Worker):
         self.task = task_name
         self.seed = seed
 
-    def compute(self, config, budget, working_directory, *args, **kwargs):
+
+    def compute(self,config_id, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
         if torch.cuda.is_available():
             logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
@@ -65,6 +70,7 @@ class PyTorchWorker(Worker):
         model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
         n_devices = torch.cuda.device_count()
         accelerator = 'cpu' if n_devices == 0 else 'auto'
+        strategy = DDPStrategy(timeout=datetime.timedelta(seconds=3600)),
 
         # set up logger
         trial_id = str(uuid.uuid4().hex)[:5]
@@ -77,32 +83,40 @@ class PyTorchWorker(Worker):
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp",  # change to ddp_spawn when in interactive mode
+            strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
             logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
                     CSVLogger(save_dir=log_dir, name="csv_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
 
-            log_every_n_steps=10,
-            val_check_interval=10,
+            log_every_n_steps=5,
+            val_check_interval=0.5,
             enable_checkpointing=False,
 
+            limit_train_batches=10,
+            limit_val_batches=5,
+            limit_test_batches=5,
+
             accumulate_grad_batches=config['gradient_accumulation_steps'],
-            gradient_clip_val=config['max_grad_norm'],
-            gradient_clip_algorithm=config['gradient_clip_algorithm'],
+            # gradient_clip_val=config['max_grad_norm'],
+            # gradient_clip_algorithm=config['gradient_clip_algorithm'],
         )
         # train model
         try:
             trainer.fit(model, datamodule=dm)
         except Exception as e:
-            print(f"Exception in training: with config {config} and budget {budget}")
+            print(f"Exception in training job {config_id} : with config {config} and budget {budget}")
             print(e)
             traceback.print_exc()
 
+        trainer.strategy.barrier()
         val_acc = 1 - trainer.callback_metrics['val_acc_epoch'].item()
+
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': list(trainer.callback_metrics),
+            'info': {'all_metrics': trainer.callback_metrics,
+                     'budget': budget,
+                     'trial_id': trial_id,
                      }
 
         })
@@ -170,16 +184,16 @@ class PyTorchWorker(Worker):
                                                         'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
                                                         'polynomial_decay_with_warmup', 'constant_with_warmup'])
 
-        weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
+        weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-6, upper=1e-5, log=True)
         warmup_steps = CSH.CategoricalHyperparameter('warmup_steps', choices=[10, 100, 500])
         cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
 
-        adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
+        adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-7, log=True)
         gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
                                                                     choices=[1, 4, 8, 16])
-        max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
-        gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
-        cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps, max_grad_norm, gradient_clip_algorithm])
+        # max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
+        # gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
+        cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps])
         return cs
 
 
@@ -203,6 +217,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
 
@@ -216,13 +231,17 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id, host=host, timeout=1000, seed=args.seed)
+                          run_id=args.run_id, host=host, timeout=300, seed=args.seed)
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
 
     # ensure the file is empty, init the config and results json
-    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=False)
+    # result_logger = hpres.json_result_logger(directory=working_dir, overwrite=False)
+    # Save the configspace
+    cs_string = cs_json.write(PyTorchWorker.get_configspace())
+    with open(os.path.join(working_dir, f'configspace.json'), 'w') as fh:
+        fh.write(cs_string)
 
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
@@ -236,7 +255,7 @@ if __name__ == "__main__":
 
     w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
                       run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=1000, seed=args.seed)
+                      timeout=600, seed=args.seed)
     w.run(background=True)
 
     try:
@@ -255,7 +274,7 @@ if __name__ == "__main__":
                 min_budget=args.min_budget,
                 max_budget=args.max_budget,
                 previous_result=None,
-                result_logger=result_logger,
+                # result_logger=result_logger,
                 )
     try:
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)

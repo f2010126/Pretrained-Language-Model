@@ -188,28 +188,28 @@ class PLMTransformer(LightningModule):
         acc = self.accuracy(preds, labels)
         self.train_f1.add_batch(predictions=preds, references=labels)
         self.train_acc.add_batch(predictions=preds, references=labels)
-        self.train_bal_acc.add_batch(predictions=preds, references=labels)
+        # self.train_bal_acc.add_batch(predictions=preds, references=labels)
         f1 = self.train_f1.compute(average='weighted')['f1']
-        bal_acc = self.train_bal_acc.compute()['balanced_accuracy']
+        # bal_acc = self.train_bal_acc.compute()['balanced_accuracy']
         train_acc = self.train_acc.compute()['accuracy']
 
-        self.log(f'{stage}_acc', acc, prog_bar=False, sync_dist=True, on_step=True, logger=True)
-        self.log(f'{stage}_loss', loss, prog_bar=False, sync_dist=True, on_step=True, logger=True)
-        self.log(f'{stage}_f1', f1, prog_bar=False, sync_dist=True, on_step=True, logger=True)
-        self.log(f'{stage}_bal_acc', bal_acc, prog_bar=False, sync_dist=True, on_step=True, logger=True)
-        return {f"loss": loss, f"accuracy": acc, f"f1": f1, f"bal_acc": bal_acc}
+        self.log(f'{stage}_acc', acc, sync_dist=True, on_step=True, on_epoch=True, logger=True, prog_bar=True)
+        self.log(f'{stage}_loss', loss, sync_dist=True, on_step=True, on_epoch=True, logger=True, prog_bar=True)
+        self.log(f'{stage}_f1', f1, sync_dist=True, on_step=True, on_epoch=True, logger=True, prog_bar=True)
+        # self.log(f'{stage}_bal_acc', bal_acc, prog_bar=False, sync_dist=True, on_step=True,on_epoch=True, logger=True)
+        return {f"loss": loss, f"accuracy": acc, f"f1": f1}
 
     def training_step(self, batch, batch_idx, dataloader_idx=0, print_str="train"):
         result = self.evaluate_step(batch, batch_idx, stage='train')
         self.training_step_outputs.append({"train_loss": result["loss"], "train_accuracy": result["accuracy"],
-                                           "train_f1": result["f1"], "train_bal_acc": result["bal_acc"]})
+                                           "train_f1": result["f1"], })
 
         return result
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
         result = self.evaluate_step(batch, batch_idx, stage='val')
         self.validation_step_outputs.append({"val_loss": result["loss"], "val_accuracy": result["accuracy"],
-                                             "val_f1": result["f1"], "val_bal_acc": result["bal_acc"]})
+                                             "val_f1": result["f1"], })
         return result
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
@@ -220,30 +220,27 @@ class PLMTransformer(LightningModule):
         avg_loss = torch.stack([x["train_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["train_accuracy"] for x in outputs]).mean()
         avg_f1 = mean([x["train_f1"] for x in outputs])
-        avg_bal_acc = mean([x["train_bal_acc"] for x in outputs])
 
-        self.log_dict(
-            dictionary={"metrics/train_loss": avg_loss, "metrics/train_accuracy": avg_acc, "metrics/train_f1": avg_f1,
-                        "metrics/train_bal_acc": avg_bal_acc, "step": self.current_epoch},
-            prog_bar=False, logger=True, sync_dist=True, on_epoch=True, on_step=False)
+        # self.log_dict(
+        #     dictionary={"metrics/train_loss": avg_loss, "metrics/train_accuracy": avg_acc, "metrics/train_f1": avg_f1,
+        #                 "metrics/train_bal_acc": avg_bal_acc, "step": self.current_epoch},
+        #     prog_bar=False, logger=True, sync_dist=True, on_epoch=True, on_step=False)
 
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         avg_acc = torch.stack([x["val_accuracy"] for x in outputs]).mean()
         avg_f1 = mean([x["val_f1"] for x in outputs])
-        avg_bal_acc = mean([x["val_bal_acc"] for x in outputs])
 
         log_this = {"metrics/val_loss": avg_loss,
                     "metrics/val_accuracy": avg_acc,
                     "metrics/val_f1": avg_f1,
-                    "metrics/val_bal_acc": avg_bal_acc,
                     'step': float(self.current_epoch)}
-        self.log_dict(dictionary=log_this, prog_bar=False, logger=True, sync_dist=True, on_epoch=True, on_step=False)
+        # self.log_dict(dictionary=log_this, prog_bar=False, logger=True, sync_dist=True, on_epoch=True, on_step=False)
 
     def on_validation_end(self):
         # last hook that's used by Trainer in ray.
-        logging.debug("on_validation_end")
+        logging.debug("on_validation_end state of metrics: {}".format(self.trainer.callback_metrics))
 
     # Optimizers
     def configure_optimizers(self):
