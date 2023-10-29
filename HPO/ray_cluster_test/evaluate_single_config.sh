@@ -7,8 +7,8 @@
 #SBATCH --time=14:00:00
 #SBATCH --mail-user=dipti.sengupta@students.uni-freiburg.de
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/LongEval.out
-#SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/LongEval.error
+#SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/AmazLong.out
+#SBATCH --error=/work/dlclarge1/dsengupt-zap_hpo_og/logs/AmazLong.error
 
 
 export NCCL_DEBUG=INFO

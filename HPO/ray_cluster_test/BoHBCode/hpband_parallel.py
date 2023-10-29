@@ -109,6 +109,10 @@ class PyTorchWorker(Worker):
             traceback.print_exc()
 
         trainer.strategy.barrier()
+        if trainer.global_rank > 0:
+            exit(0)
+
+        print("trainer callback metrics: ", trainer.callback_metrics)
         val_acc = 1 - trainer.callback_metrics['val_acc_epoch'].item()
 
 
