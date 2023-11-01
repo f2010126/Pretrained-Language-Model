@@ -76,14 +76,18 @@ class PyTorchWorker(Worker):
             accelerator="auto",
             num_nodes=1,
             devices="auto",
-            strategy="ddp",  # change to ddp_spawn when in interactive mode
+            strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
             logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
                     CSVLogger(save_dir=log_dir, name="csv_logs", version=".")],
             max_time="00:1:00:00",  # give each run a time limit
             num_sanity_val_steps=1,
             log_every_n_steps=10,
-            val_check_interval=10,
+            val_check_interval=0.5,
             enable_checkpointing=False,
+            # Fidelity
+            limit_test_batches=0.25,
+            limit_val_batches=.25,
+            limit_train_batches=.25,
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
             gradient_clip_val=config['max_grad_norm'],
@@ -184,8 +188,8 @@ class PyTorchWorker(Worker):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
-    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=2)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=10)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
                         default=4)  # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
@@ -214,7 +218,8 @@ if __name__ == "__main__":
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id, host=host, timeout=1000, )
+                          run_id=args.run_id, host=host, timeout=3700, )
+        # increase timeout to 1 hour
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
@@ -234,7 +239,8 @@ if __name__ == "__main__":
 
     w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
                       run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=1000)
+                      timeout=3700)
+    # increase timeout to 1 hour
     w.run(background=True)
 
     try:
