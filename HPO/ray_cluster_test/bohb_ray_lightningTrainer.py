@@ -23,6 +23,7 @@ from ray.train.lightning import (
 from ray.train.torch import TorchTrainer
 from ray.tune import Callback
 from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
+from ray.tune.schedulers import ASHAScheduler
 from ray.tune.search.bohb import TuneBOHB
 from ray.tune.experiment import Trial
 
@@ -34,10 +35,11 @@ try:
     from BoHBCode.train_module import PLMTransformer
     from asha_ray_transformers import trial_dir_name
 except ImportError:
-    from .BoHBCode.data_modules import OmpData, get_datamodule
-    from .BoHBCode.train_module import PLMTransformer
-    from .asha_ray_transformers import trial_dir_name
+    from BoHBCode.data_modules import get_datamodule
+    from BoHBCode.train_module import PLMTransformer
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+import ConfigSpace as CS
+import ConfigSpace.hyperparameters as CSH
 
 hpo_config = {
     'model_name_or_path': tune.choice(["bert-base-uncased", "bert-base-multilingual-cased",
@@ -98,7 +100,7 @@ def objective_torch_trainer(config):
         devices='auto',
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
-        val_check_interval=50,  # check validation after 100 train batches
+        val_check_interval=10,  # check validation after 100 train batches
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback],
@@ -106,7 +108,8 @@ def objective_torch_trainer(config):
         gradient_clip_val=config['max_grad_norm'],
         gradient_clip_algorithm=config['gradient_clip_algorithm'],
         accelerator='auto',
-        log_every_n_steps=50,
+        log_every_n_steps=10,
+        enable_checkpointing=False,
     )
 
     # Validate your Lightning trainer configuration
@@ -119,6 +122,48 @@ def objective_torch_trainer(config):
         print("Other error", e)
         print(traceback.format_exc())
     print("Finished obj")
+
+
+def master_get_config_space():
+    cs = CS.ConfigurationSpace()
+
+    # Dataset related
+    max_seq_length = CSH.CategoricalHyperparameter('max_seq_length', choices=[128, 256, 512])
+    train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4, 8, 16])
+    eval_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_eval_batch_size', choices=[4, 8, 16])
+    cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu, max_seq_length])
+    model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
+                                                       ["bert-base-uncased", "bert-base-multilingual-cased",
+                                                        "deepset/bert-base-german-cased-oldvocab",
+                                                        "uklfr/gottbert-base",
+                                                        "dvm1983/TinyBERT_General_4L_312D_de",
+                                                        "linhd-postdata/alberti-bert-base-multilingual-cased",
+                                                        "dbmdz/distilbert-base-german-europeana-cased"])
+
+    # Model related
+    optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD', 'RAdam'])
+    lr = CSH.UniformFloatHyperparameter('learning_rate', lower=2e-5, upper=7e-5, log=True)
+    sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
+    cs.add_hyperparameters([model_name_or_path, lr, optimizer, sgd_momentum])
+    # The hyperparameter sgd_momentum will be used,if the configuration
+    # contains 'SGD' as optimizer.
+    cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
+    cs.add_condition(cond)
+
+    scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
+                                                   ['linear_with_warmup', 'cosine_with_warmup',
+                                                    'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
+                                                    'polynomial_decay_with_warmup', 'constant_with_warmup'])
+
+    weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
+    warmup_steps = CSH.CategoricalHyperparameter('warmup_steps', choices=[10, 100, 500])
+    cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
+
+    adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
+    gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
+                                                                choices=[1, 4, 8, 16])
+    cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps])
+    return cs
 
 
 # BOHB LOOP
@@ -160,11 +205,15 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
         stop_last_trials=True,
         # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
     )
-
+    # options for bohb optimiser
+    config_bohb = {'top_n_percent': 15, 'num_samples': 64,
+                   'random_fraction': 1 / 3, 'bandwidth_factor': 3, 'min_bandwidth': 1e-3, }
     # search Algo
-    bohb_search = TuneBOHB(
-        # space=config_space,  # If you want to set the space manually
-    )
+    bohb_search = TuneBOHB(bohb_config=config_bohb,
+                           metric="ptl/val_accuracy",
+                           mode="max",
+                           # space=config_space,  # If you want to set the space manually
+                           )
     # Number of parallel runs allowed
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
 
@@ -186,8 +235,8 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                search_alg=bohb_search,
                                reuse_actors=False,
                                num_samples=num_trials,
-                               trial_name_creator=trial_dir_name,
-                               trial_dirname_creator=trial_dir_name,
+                               # trial_name_creator=trial_dir_name,
+                               # trial_dirname_creator=trial_dir_name,
                            ),
                            run_config=ray.train.RunConfig(
                                name=exp_name,
