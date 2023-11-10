@@ -51,7 +51,7 @@ def predict_bohb_run(min_budget, max_budget, eta, n_iterations):
     print('  A total of {} runs will be executed.'.format(n_runs))
 
 def try_predict_bobh_run(self):
-    result = predict_bohb_run(min_budget=1, max_budget=9, eta=3, n_iterations=5)
+    result = predict_bohb_run(min_budget=1, max_budget=3, eta=2, n_iterations=4)
     print(result)
 
 if __name__ == "__main__":

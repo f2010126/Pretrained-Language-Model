@@ -7,15 +7,22 @@ import sys
 import time
 import traceback
 import uuid
+import torch.distributed as dist
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
 from hpbandster.core.worker import Worker
+from hpbandster.core.dispatcher import Job
 from hpbandster.optimizers import BOHB as BOHB
-from pytorch_lightning import seed_everything, Trainer
-from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
+import pytorch_lightning
+
+from lightning.pytorch import Trainer
+from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
+from lightning.pytorch import seed_everything
+from lightning.fabric.plugins.environments import LightningEnvironment
+from lightning.pytorch.strategies import DDPStrategy
 
 logger = multiprocessing.log_to_stderr()
 
@@ -48,11 +55,7 @@ class PyTorchWorker(Worker):
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
-        if torch.cuda.is_available():
-            logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
-        else:
-            logging.debug("CUDA not available, using CPU")
-
+        # with fork, no torch.cuda allowed
         seed_everything(9)
 
         # set up data and model
@@ -62,8 +65,6 @@ class PyTorchWorker(Worker):
                             eval_batch_size=config['per_device_eval_batch_size'], data_dir=self.data_dir)
         dm.setup("fit")
         model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
-        n_devices = torch.cuda.device_count()
-        accelerator = 'cpu' if n_devices == 0 else 'auto'
 
         # set up logger
         trial_id = str(uuid.uuid4().hex)[:5]
@@ -71,9 +72,11 @@ class PyTorchWorker(Worker):
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/{folder_name}/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
 
+        custom_plugins = [LightningEnvironment()]
+
         trainer = Trainer(
             max_epochs=int(budget),
-            accelerator="auto",
+            accelerator="gpu",
             num_nodes=1,
             devices="auto",
             strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
@@ -84,14 +87,13 @@ class PyTorchWorker(Worker):
             log_every_n_steps=10,
             val_check_interval=0.5,
             enable_checkpointing=False,
+            plugins=custom_plugins,
             # Fidelity
-            limit_test_batches=0.25,
-            limit_val_batches=.25,
-            limit_train_batches=.25,
+            limit_test_batches=10,
+            limit_val_batches=10,
+            limit_train_batches=20,
 
             accumulate_grad_batches=config['gradient_accumulation_steps'],
-            gradient_clip_val=config['max_grad_norm'],
-            gradient_clip_algorithm=config['gradient_clip_algorithm'],
         )
         # train model
         try:
@@ -105,7 +107,7 @@ class PyTorchWorker(Worker):
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': list(trainer.callback_metrics),
+            'info': {'all_metrics': trainer.callback_metrics,
                      }
 
         })
@@ -180,16 +182,14 @@ class PyTorchWorker(Worker):
         adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
         gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
                                                                     choices=[1, 4, 8, 16])
-        max_grad_norm = CSH.UniformFloatHyperparameter('max_grad_norm', lower=0.0, upper=2.0, log=False)
-        gradient_clip_algorithm = CSH.CategoricalHyperparameter('gradient_clip_algorithm', ['norm', 'value'])
-        cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps, max_grad_norm, gradient_clip_algorithm])
+        cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps])
         return cs
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
-    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=2)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=10)
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=6)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
                         default=4)  # no of times to sample??
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
@@ -260,6 +260,7 @@ if __name__ == "__main__":
                 max_budget=args.max_budget,
                 previous_result=None,
                 result_logger=result_logger,
+                eta=2,  # Determines how many configurations advance to the next round.
                 )
     try:
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)

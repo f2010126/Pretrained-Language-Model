@@ -6,14 +6,11 @@ import sys
 import traceback
 # for load dict
 from typing import List
-
-import pytorch_lightning as pl
 import ray
 import torch
-from pytorch_lightning.loggers import CSVLogger
-from pytorch_lightning.loggers import TensorBoardLogger
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch import seed_everything
 from ray import tune
-from ray.train.lightning import LightningConfigBuilder
 from ray.train.lightning import (
     RayDDPStrategy,
     RayLightningEnvironment,
@@ -55,7 +52,7 @@ hpo_config = {
                                    'constant_with_warmup']),
     'learning_rate': tune.loguniform(2e-5, 6e-5),
     'weight_decay': tune.loguniform(1e-5, 1e-3),
-    'adam_epsilon': tune.loguniform(1e-8, 1e-6),
+    # 'adam_epsilon': tune.loguniform(1e-8, 1e-6),
     'sgd_momentum': tune.loguniform(0.8, 0.99),
     'warmup_steps': tune.choice([0, 100, 1000]),
     'per_device_train_batch_size': tune.choice([2, 4, 8]),
@@ -81,6 +78,7 @@ class MyCallback(Callback):
 
 
 def objective_torch_trainer(config):
+    seed_everything(143)
     data_dir = config['data_dir']
     logging.debug(f"dir {data_dir} and cwd {os.getcwd()}")
     dm = get_datamodule(task_name=config['task_name'], model_name_or_path=config['model_name_or_path'],
@@ -92,7 +90,7 @@ def objective_torch_trainer(config):
     ckpt_report_callback = RayTrainReportCallback()
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     trainer = pl.Trainer(
-        max_epochs=config['num_epochs'],
+        # max_epochs=config['num_epochs'],
         logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                 TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
 
@@ -100,16 +98,15 @@ def objective_torch_trainer(config):
         devices='auto',
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
-        val_check_interval=10,  # check validation after 100 train batches
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback],
         accumulate_grad_batches=config['gradient_accumulation_steps'],
-        gradient_clip_val=config['max_grad_norm'],
-        gradient_clip_algorithm=config['gradient_clip_algorithm'],
         accelerator='auto',
-        log_every_n_steps=10,
         enable_checkpointing=False,
+        log_every_n_steps=50,
+        val_check_interval=0.5,
+        # Fidelity
     )
 
     # Validate your Lightning trainer configuration
@@ -159,15 +156,16 @@ def master_get_config_space():
     warmup_steps = CSH.CategoricalHyperparameter('warmup_steps', choices=[10, 100, 500])
     cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
 
-    adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
+    # adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
     gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
                                                                 choices=[1, 4, 8, 16])
-    cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps])
+    cs.add_hyperparameters([gradient_accumulation_steps])
     return cs
 
 
 # BOHB LOOP
 def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
+    config_space = master_get_config_space()
     if torch.cuda.is_available():
         use_gpu = True
         # each Trainer gets that.
@@ -196,12 +194,12 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
     restore_path = os.path.join(result_dir, exp_name)
     print(f"Restore path is {restore_path}, result_dir is {result_dir}")
 
-    max_iterations = 3
+    max_iterations = 7
     # scheduler
     bohb_hyperband = HyperBandForBOHB(
         time_attr="training_iteration",
         max_t=max_iterations,  # max time per trial? max length of time a trial
-        reduction_factor=2,  # cut down trials by factor of?
+        reduction_factor=2,  # cut down trials by factor of? eta here
         stop_last_trials=True,
         # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
     )
@@ -212,7 +210,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
     bohb_search = TuneBOHB(bohb_config=config_bohb,
                            metric="ptl/val_accuracy",
                            mode="max",
-                           # space=config_space,  # If you want to set the space manually
+                           space=config_space,  # If you want to set the space manually
                            )
     # Number of parallel runs allowed
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
@@ -249,7 +247,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                    checkpoint_score_order="max",
                                ),
                            ),
-                           param_space={"train_loop_config": hpo_config},
+                           param_space={"train_loop_config": config_space},
                            )
 
     logger.debug(f"Tuner setup. Starting tune.run")

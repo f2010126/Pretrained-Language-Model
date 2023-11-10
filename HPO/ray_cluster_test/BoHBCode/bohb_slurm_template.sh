@@ -8,7 +8,7 @@ ${GIVEN_NODE}
 ### This script works for any number of nodes
 #SBATCH --nodes=${NUM_NODES}
 #SBATCH --gres=gpu:${NUM_GPUS_PER_NODE}
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=32
 
 #SBATCH --mail-user=dipti.sengupta@students.uni-freiburg.de
 #SBATCH --mail-type=BEGIN,END,FAIL
