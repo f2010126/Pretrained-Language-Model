@@ -23,6 +23,7 @@ from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.search.bohb import TuneBOHB
 from ray.tune.experiment import Trial
+import lightning.pytorch as pl
 
 # local changes
 logger = multiprocessing.log_to_stderr()
@@ -30,7 +31,7 @@ logger = multiprocessing.log_to_stderr()
 try:
     from BoHBCode.data_modules import OmpData, get_datamodule
     from BoHBCode.train_module import PLMTransformer
-    from asha_ray_transformers import trial_dir_name
+
 except ImportError:
     from BoHBCode.data_modules import get_datamodule
     from BoHBCode.train_module import PLMTransformer
@@ -52,18 +53,14 @@ hpo_config = {
                                    'constant_with_warmup']),
     'learning_rate': tune.loguniform(2e-5, 6e-5),
     'weight_decay': tune.loguniform(1e-5, 1e-3),
-    # 'adam_epsilon': tune.loguniform(1e-8, 1e-6),
+    'adam_epsilon': tune.loguniform(1e-8, 1e-6),
     'sgd_momentum': tune.loguniform(0.8, 0.99),
-    'warmup_steps': tune.choice([0, 100, 1000]),
+    'warmup_steps': tune.choice([100, 500, 1000]),
     'per_device_train_batch_size': tune.choice([2, 4, 8]),
     'per_device_eval_batch_size': tune.choice([2, 4, 8]),
     'gradient_accumulation_steps': tune.choice([2, 4, 8]),
-    'max_steps': tune.choice([-1, 100, 1000]),
     'max_grad_norm': tune.choice([0.0, 1.0, 2.0]),
-    'seed': tune.choice([42, 1234, 2021]),
     'max_seq_length': tune.choice([128, 256, 512]),
-    "num_epochs": tune.choice([2, 3, 4]),
-    "gradient_clip_algorithm": tune.choice(["norm", "value"]),
 }
 
 
@@ -95,18 +92,24 @@ def objective_torch_trainer(config):
                 TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
 
         # If fractional GPUs passed in, convert to int.
-        devices='auto',
+        num_nodes=1,
+        devices="auto",
+        accelerator="cpu",
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
         strategy=RayDDPStrategy(),
         plugins=[RayLightningEnvironment()],
         callbacks=[ckpt_report_callback],
         accumulate_grad_batches=config['gradient_accumulation_steps'],
-        accelerator='auto',
+
         enable_checkpointing=False,
-        log_every_n_steps=50,
+        log_every_n_steps=1,
         val_check_interval=0.5,
         # Fidelity
+        limit_train_batches=2,
+        limit_test_batches=1,
+        limit_val_batches=1,
+        
     )
 
     # Validate your Lightning trainer configuration
@@ -120,52 +123,8 @@ def objective_torch_trainer(config):
         print(traceback.format_exc())
     print("Finished obj")
 
-
-def master_get_config_space():
-    cs = CS.ConfigurationSpace()
-
-    # Dataset related
-    max_seq_length = CSH.CategoricalHyperparameter('max_seq_length', choices=[128, 256, 512])
-    train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4, 8, 16])
-    eval_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_eval_batch_size', choices=[4, 8, 16])
-    cs.add_hyperparameters([train_batch_size_gpu, eval_batch_size_gpu, max_seq_length])
-    model_name_or_path = CSH.CategoricalHyperparameter('model_name_or_path',
-                                                       ["bert-base-uncased", "bert-base-multilingual-cased",
-                                                        "deepset/bert-base-german-cased-oldvocab",
-                                                        "uklfr/gottbert-base",
-                                                        "dvm1983/TinyBERT_General_4L_312D_de",
-                                                        "linhd-postdata/alberti-bert-base-multilingual-cased",
-                                                        "dbmdz/distilbert-base-german-europeana-cased"])
-
-    # Model related
-    optimizer = CSH.CategoricalHyperparameter('optimizer_name', ['Adam', 'AdamW', 'SGD', 'RAdam'])
-    lr = CSH.UniformFloatHyperparameter('learning_rate', lower=2e-5, upper=7e-5, log=True)
-    sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
-    cs.add_hyperparameters([model_name_or_path, lr, optimizer, sgd_momentum])
-    # The hyperparameter sgd_momentum will be used,if the configuration
-    # contains 'SGD' as optimizer.
-    cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
-    cs.add_condition(cond)
-
-    scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
-                                                   ['linear_with_warmup', 'cosine_with_warmup',
-                                                    'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
-                                                    'polynomial_decay_with_warmup', 'constant_with_warmup'])
-
-    weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
-    warmup_steps = CSH.CategoricalHyperparameter('warmup_steps', choices=[10, 100, 500])
-    cs.add_hyperparameters([scheduler_name, weight_decay, warmup_steps])
-
-    # adam_epsilon = CSH.UniformFloatHyperparameter('adam_epsilon', lower=1e-8, upper=1e-6, log=True)
-    gradient_accumulation_steps = CSH.CategoricalHyperparameter('gradient_accumulation_steps',
-                                                                choices=[1, 4, 8, 16])
-    cs.add_hyperparameters([gradient_accumulation_steps])
-    return cs
-
-
 # BOHB LOOP
 def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
-    config_space = master_get_config_space()
     if torch.cuda.is_available():
         use_gpu = True
         # each Trainer gets that.
@@ -177,8 +136,10 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
         use_gpu = False
         scaling_config = ray.train.ScalingConfig(
             # no of other nodes?
-            num_workers=1, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
+            num_workers=2, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
         )
+    
+    print(f"Scaling config -----> {scaling_config}")
 
     # train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
     #                                                 data_dir=os.path.join(os.getcwd(), "tokenized_data"))
@@ -204,13 +165,13 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
         # Whether to terminate the trials after reaching max_t. Will this clash wth num_epochs of trainer
     )
     # options for bohb optimiser
-    config_bohb = {'top_n_percent': 15, 'num_samples': 64,
+    config_bohb = {'top_n_percent': 15, 'num_samples': 20,
                    'random_fraction': 1 / 3, 'bandwidth_factor': 3, 'min_bandwidth': 1e-3, }
     # search Algo
     bohb_search = TuneBOHB(bohb_config=config_bohb,
-                           metric="ptl/val_accuracy",
-                           mode="max",
-                           space=config_space,  # If you want to set the space manually
+                           #metric="ptl/val_accuracy",
+                           #mode="max",
+                        # If you want to set the space manually
                            )
     # Number of parallel runs allowed
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
@@ -222,7 +183,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                    # resume_unfinished=True,
                                    resume_errored=True,
                                    restart_errored=False,
-                                   # param_space={"train_loop_config": hpo_config},
+                                   param_space={"train_loop_config": hpo_config},
                                    )
     else:
         tuner = tune.Tuner(ray_trainer,
@@ -247,7 +208,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                    checkpoint_score_order="max",
                                ),
                            ),
-                           param_space={"train_loop_config": config_space},
+                           param_space={"train_loop_config": hpo_config},
                            )
 
     logger.debug(f"Tuner setup. Starting tune.run")

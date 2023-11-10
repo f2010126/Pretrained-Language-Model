@@ -1,5 +1,6 @@
 import os
 from distributed import progress
+from regex import P
 import torch
 import tempfile
 import lightning.pytorch as pl
@@ -27,8 +28,7 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.train import RunConfig, ScalingConfig, CheckpointConfig
 from ray.train.torch import TorchTrainer
 import ray
-from ray._private.usage.usage_lib import TagKey, record_extra_usage_tag
-from typing import Any, Dict, Optional
+
 from ray.tune import CLIReporter
 
 
@@ -139,7 +139,7 @@ def train_func(config):
 
     trainer = pl.Trainer(
         devices="auto",
-        accelerator="cpu",
+        accelerator="auto",
         strategy=RayDDPStrategy(),
         callbacks=[RayTrainReportCallback()],
         plugins=[RayLightningEnvironment()],
@@ -172,6 +172,7 @@ def tune_mnist_asha(num_samples=10):
         scaling_config = ScalingConfig(
         num_workers=2, use_gpu=False, resources_per_worker={"CPU": 1},
         )
+    print(f'Using scaling config: {scaling_config}')
     run_config = RunConfig(
         checkpoint_config=CheckpointConfig(
             num_to_keep=2,
@@ -235,16 +236,17 @@ def tune_mnist_bohb(num_samples=10):
     num_epochs = 5
 
     # Number of sampls from parameter space
-    num_samples = 10
+    num_samples = num_samples
 
     if torch.cuda.is_available():
             scaling_config = ScalingConfig(
-        num_workers=2, use_gpu=True, resources_per_worker={"CPU": 1,"GPU": 1},
+        num_workers=4, use_gpu=True, resources_per_worker={"CPU": 1,"GPU": 1},
         )
     else:
         scaling_config = ScalingConfig(
         num_workers=2, use_gpu=False, resources_per_worker={"CPU": 1},
         )
+    print(f'Using scaling config: {scaling_config}')
     run_config = RunConfig(
         callbacks=[MyCallback()],
         checkpoint_config=CheckpointConfig(
@@ -287,7 +289,7 @@ def tune_mnist_bohb(num_samples=10):
         ray_trainer,
         param_space={"train_loop_config": search_space},
         run_config=ray.train.RunConfig(
-            verbose=1,
+            verbose=2,
             progress_reporter=reportercli,
         ),
         tune_config=tune.TuneConfig(
