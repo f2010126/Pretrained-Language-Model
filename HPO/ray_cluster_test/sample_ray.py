@@ -198,7 +198,6 @@ def tune_mnist_asha(num_samples=10):
         ray_trainer,
         param_space={"train_loop_config": search_space},
         run_config=ray.train.RunConfig(
-            verbose=3,
             progress_reporter=reportercli,
         ),
         tune_config=tune.TuneConfig(
@@ -240,29 +239,20 @@ def tune_mnist_bohb(num_samples=10):
 
     if torch.cuda.is_available():
             scaling_config = ScalingConfig(
-        num_workers=4, use_gpu=True, resources_per_worker={"CPU": 1,"GPU": 1},
+        num_workers=2, use_gpu=True, resources_per_worker={"CPU": 1,"GPU": 1},
         )
     else:
         scaling_config = ScalingConfig(
         num_workers=2, use_gpu=False, resources_per_worker={"CPU": 1},
         )
     print(f'Using scaling config: {scaling_config}')
-    run_config = RunConfig(
-        callbacks=[MyCallback()],
-        checkpoint_config=CheckpointConfig(
-            num_to_keep=2,
-            checkpoint_score_attribute="ptl/val_accuracy",
-            checkpoint_score_order="max",
-        ),
-        )
     
     # Define a TorchTrainer without hyper-parameters for Tuner
     ray_trainer = TorchTrainer(
         train_func,
         scaling_config=scaling_config,
-        run_config=run_config,
     )
-    
+    result_dir = os.path.join(os.getcwd(), "ray_results_result")
     max_iterations = 7
     # scheduler
     bohb_hyperband = HyperBandForBOHB(
@@ -289,8 +279,17 @@ def tune_mnist_bohb(num_samples=10):
         ray_trainer,
         param_space={"train_loop_config": search_space},
         run_config=ray.train.RunConfig(
-            verbose=2,
+            verbose=None,
+            name='mnist_bohb',
+            storage_path=result_dir,
+            log_to_file=True,
             progress_reporter=reportercli,
+            callbacks=[MyCallback()],
+            checkpoint_config=CheckpointConfig(
+                num_to_keep=2,
+                checkpoint_score_attribute="ptl/val_accuracy",
+                checkpoint_score_order="max",
+            ),
         ),
         tune_config=tune.TuneConfig(
             metric="ptl/val_accuracy",
@@ -306,5 +305,5 @@ def tune_mnist_bohb(num_samples=10):
     
 
 if __name__ == "__main__":
-    tune_mnist_bohb(15)
+    tune_mnist_bohb(3)
     #run_sample(5)

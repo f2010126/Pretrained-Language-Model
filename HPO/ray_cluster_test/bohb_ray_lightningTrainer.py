@@ -29,9 +29,8 @@ import lightning.pytorch as pl
 logger = multiprocessing.log_to_stderr()
 # local imports
 try:
-    from BoHBCode.data_modules import OmpData, get_datamodule
+    from BoHBCode.data_modules import get_datamodule
     from BoHBCode.train_module import PLMTransformer
-
 except ImportError:
     from BoHBCode.data_modules import get_datamodule
     from BoHBCode.train_module import PLMTransformer
@@ -94,7 +93,7 @@ def objective_torch_trainer(config):
         # If fractional GPUs passed in, convert to int.
         num_nodes=1,
         devices="auto",
-        accelerator="cpu",
+        accelerator="auto",
         enable_progress_bar=True,
         max_time="00:1:00:00",  # give each run a time limit
         strategy=RayDDPStrategy(),
