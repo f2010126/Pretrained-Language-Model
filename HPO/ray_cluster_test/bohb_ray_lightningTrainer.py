@@ -24,6 +24,7 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.tune.search.bohb import TuneBOHB
 from ray.tune.experiment import Trial
 import lightning.pytorch as pl
+import uuid
 
 # local changes
 logger = multiprocessing.log_to_stderr()
@@ -72,6 +73,10 @@ class MyCallback(Callback):
     ):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
 
+def trial_dir_name(Trial):
+    # generate 5 digit uuid
+    trial_Name = uuid.uuid4().hex[:5]
+    return f"trial_{trial_Name}_" + str(Trial.trial_id)
 
 def objective_torch_trainer(config):
     seed_everything(143)
@@ -87,7 +92,7 @@ def objective_torch_trainer(config):
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     trainer = pl.Trainer(
         # max_epochs=config['num_epochs'],
-        logger=[CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+        logger=[# CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                 TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
 
         # If fractional GPUs passed in, convert to int.
@@ -105,9 +110,6 @@ def objective_torch_trainer(config):
         log_every_n_steps=1,
         val_check_interval=0.5,
         # Fidelity
-        limit_train_batches=2,
-        limit_test_batches=1,
-        limit_val_batches=1,
         
     )
 
@@ -193,8 +195,8 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                                search_alg=bohb_search,
                                reuse_actors=False,
                                num_samples=num_trials,
-                               # trial_name_creator=trial_dir_name,
-                               # trial_dirname_creator=trial_dir_name,
+                               trial_name_creator=trial_dir_name,
+                               trial_dirname_creator=trial_dir_name,
                            ),
                            run_config=ray.train.RunConfig(
                                name=exp_name,
@@ -279,10 +281,8 @@ if __name__ == "__main__":
     if args.smoke_test:
         print("Running smoke test")
         args.exp_name = args.exp_name + "_smoke"
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=3,
-                           exp_name=args.exp_name, task_name=args.task_name)
-    else:
-        torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
-                           exp_name=args.exp_name, task_name=args.task_name)
+        args.num_trials = 3
 
+    torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
+                           exp_name=args.exp_name, task_name=args.task_name)
     print("END OF MAIN SCRIPT")

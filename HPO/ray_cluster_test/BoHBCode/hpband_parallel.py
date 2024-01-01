@@ -1,4 +1,5 @@
 import argparse
+from ast import Mod
 import logging
 import multiprocessing
 import os
@@ -18,11 +19,14 @@ from hpbandster.core.dispatcher import Job
 from hpbandster.optimizers import BOHB as BOHB
 import pytorch_lightning
 
-from lightning.pytorch import Trainer
-from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
-from lightning.pytorch import seed_everything
-from lightning.fabric.plugins.environments import LightningEnvironment
-from lightning.pytorch.strategies import DDPStrategy
+from pytorch_lightning import seed_everything
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
+from pytorch_lightning.strategies import DDPStrategy
+
+
+from ray.train import ScalingConfig
+from ray.train.torch import TorchTrainer
 
 logger = multiprocessing.log_to_stderr()
 
@@ -39,11 +43,12 @@ sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_te
 
 try:
     from data_modules import get_datamodule
-    from train_module import PLMTransformer, GLUETransformer
-    from asha_ray_transformers import trial_dir_name
+    from train_module import PLMTransformer
+    from bert_simple import Model
 except ImportError:
     from data_modules import get_datamodule
-    from train_module import PLMTransformer, GLUETransformer
+    from train_module import PLMTransformer
+    from bert_simple import Model
 
 
 class PyTorchWorker(Worker):
@@ -52,11 +57,19 @@ class PyTorchWorker(Worker):
         self.data_dir = data_dir
         self.log_dir = log_dir
         self.task = task_name
-
+    
     def compute(self, config, budget, working_directory, *args, **kwargs):
+        print(f"Working directory: {working_directory} with devices: {torch.cuda.device_count()}")
+        scaling_config = ScalingConfig(num_workers=2, use_gpu=True,resources_per_worker={"CPU": 2, "GPU": 1})
+         # [5] Launch distributed training job.
+        config['epochs']=int(budget)
+        trainer = TorchTrainer(train_func, scaling_config=scaling_config,train_loop_config=config )
+        result = trainer.fit()
+
+    def old_compute(self, config, budget, working_directory, *args, **kwargs):
         print("budget aka epochs------> {}".format(budget))
         # with fork, no torch.cuda allowed
-        seed_everything(9)
+        seed_everything(142)
 
         # set up data and model
         dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
@@ -64,7 +77,8 @@ class PyTorchWorker(Worker):
                             train_batch_size=config['per_device_train_batch_size'],
                             eval_batch_size=config['per_device_eval_batch_size'], data_dir=self.data_dir)
         dm.setup("fit")
-        model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
+        model = Model(config=config, num_labels=dm.task_metadata['num_labels'])
+        #PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
 
         # set up logger
         trial_id = str(uuid.uuid4().hex)[:5]
@@ -72,42 +86,41 @@ class PyTorchWorker(Worker):
         log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/{folder_name}/run_{trial_id}")
         os.makedirs(log_dir, exist_ok=True)
 
-        custom_plugins = [LightningEnvironment()]
+        # custom_plugins = [LightningEnvironment()]
 
         trainer = Trainer(
-            max_epochs=int(budget),
-            accelerator="gpu",
-            num_nodes=1,
-            devices="auto",
-            strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
-            logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
-                    CSVLogger(save_dir=log_dir, name="csv_logs", version=".")],
-            max_time="00:1:00:00",  # give each run a time limit
-            num_sanity_val_steps=1,
-            log_every_n_steps=10,
-            val_check_interval=0.5,
-            enable_checkpointing=False,
-            plugins=custom_plugins,
-            # Fidelity
-            limit_test_batches=10,
-            limit_val_batches=10,
-            limit_train_batches=20,
+        max_epochs=int(budget),
+        num_sanity_val_steps=0,
+        devices=2,
+        accelerator="cpu",
+        strategy='ddp_spawn',
+        enable_progress_bar=True,
+        enable_checkpointing=False,
+        limit_train_batches=2,
+        limit_predict_batches=1,
+        limit_val_batches=1,
+        log_every_n_steps=1,
 
-            accumulate_grad_batches=config['gradient_accumulation_steps'],
+            # accumulate_grad_batches=config['gradient_accumulation_steps'],
         )
         # train model
         try:
-            trainer.fit(model, datamodule=dm)
+           trainer.fit(model, datamodule=dm)
         except Exception as e:
             print(f"Exception in training: with config {config} and budget {budget}")
             print(e)
             traceback.print_exc()
+        import random
+        # generate random numbers between 0 and 1
+        num=random.random()
 
-        val_acc = 1 - trainer.callback_metrics['ptl/val_accuracy'].item()
+        val_acc = trainer.callback_metrics['val_f1_epoch'].item()
+        print(f"val_acc: {trainer.callback_metrics}")
+        all_metric={ key:value.item() for key, value in trainer.callback_metrics}
 
         return ({
             'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': trainer.callback_metrics,
+            'info': {'all_metrics': [0,0],
                      }
 
         })
@@ -121,32 +134,6 @@ class PyTorchWorker(Worker):
         :return: ConfigurationsSpace-Object
         """
         cs = CS.ConfigurationSpace()
-        """
-        hpo_config = {
-    'model_name_or_path': tune.choice(["bert-base-uncased", "bert-base-multilingual-cased",
-                                       "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
-                                       "dvm1983/TinyBERT_General_4L_312D_de",
-                                       "linhd-postdata/alberti-bert-base-multilingual-cased",
-                                       "dbmdz/distilbert-base-german-europeana-cased", ]),
-
-    'optimizer_name': tune.choice(["AdamW", "Adam"]),
-    'scheduler_name': tune.choice(["linear", "cosine", "cosine_with_restarts", "polynomial", "constant"]),
-    'learning_rate': tune.loguniform(1e-5, 6e-5),
-    'weight_decay': tune.loguniform(1e-5, 1e-3),
-    'adam_epsilon': tune.loguniform(1e-8, 1e-6),
-    'warmup_steps': tune.choice([0, 100, 1000]),
-    'per_device_train_batch_size': tune.choice([2]),
-    'per_device_eval_batch_size': tune.choice([2, ]),
-    'gradient_accumulation_steps': tune.choice([1, 2, 4]),
-    'num_train_epochs': tune.choice([2, 3, 4]),--> Budget
-    'max_steps': tune.choice([-1, 100, 1000]),
-    'max_grad_norm': tune.choice([0.0, 1.0, 2.0]),
-    'seed': tune.choice([42, 1234, 2021]),
-    'max_seq_length': tune.choice([128, 256, 512]),
-    "num_epochs": tune.choice([2, 3, 4]),
-    "gradient_clip_algorithm": tune.choice(["norm", "value"]),
-}
-        """
         # Dataset related
         max_seq_length = CSH.CategoricalHyperparameter('max_seq_length', choices=[128, 256, 512])
         train_batch_size_gpu = CSH.CategoricalHyperparameter('per_device_train_batch_size', choices=[4, 8, 16])
@@ -172,7 +159,7 @@ class PyTorchWorker(Worker):
 
         scheduler_name = CSH.CategoricalHyperparameter('scheduler_name',
                                                        ['linear_with_warmup', 'cosine_with_warmup',
-                                                        'inverse_sqrt', 'cosine_with_hard_restarts_with_warmup',
+                                                         'cosine_with_hard_restarts_with_warmup',
                                                         'polynomial_decay_with_warmup', 'constant_with_warmup'])
 
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-5, upper=1e-3, log=True)
@@ -191,19 +178,20 @@ if __name__ == "__main__":
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=6)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
-                        default=4)  # no of times to sample??
-    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
+                        default=2)  # no of times to sample??
+    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
     # master also counts as a worker. so if n_workers is 1, only the master is used
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
                         help='A unique run id for this optimization run. An easy option is to use the job id of the '
                              'clusters scheduler.')
-    parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.')
+    parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.', default='lo0')
     parser.add_argument('--shared_directory', type=str,
-                        help='A directory that is accessible for all processes, e.g. a NFS share.')
+                        help='A directory that is accessible for all processes, e.g. a NFS share.',default='ddp_debug')
     parser.add_argument("--task-name", type=str, default="sentilex")
 
     args = parser.parse_args()
+    args.run_id = 'BigTrouble'
 
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)

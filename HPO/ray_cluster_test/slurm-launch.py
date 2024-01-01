@@ -101,7 +101,7 @@ if __name__ == "__main__":
 
     # ===== Submit the job =====
     print("Starting to submit job!")
-    subprocess.Popen(["sbatch", script_file])
+    p = subprocess.Popen(["sbatch", script_file])
     print(
         "Job submitted! Script file is at: <{}>. Log file is at: <{}>".format(
             script_file, "{}.log".format(job_name)

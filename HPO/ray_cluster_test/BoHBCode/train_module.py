@@ -4,12 +4,13 @@ from typing import Optional
 import evaluate
 import torch
 import torchmetrics
-from lightning.pytorch import LightningModule
+from pytorch_lightning import LightningModule
+# from lightning.pytorch import LightningModule
 from statistics import mean
 from torch.optim import Adam, AdamW
 from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, \
     get_polynomial_decay_schedule_with_warmup, get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup, \
-    get_cosine_with_hard_restarts_schedule_with_warmup, get_inverse_sqrt_schedule
+    get_cosine_with_hard_restarts_schedule_with_warmup
 
 
 class GLUETransformer(LightningModule):
@@ -132,7 +133,7 @@ class PLMTransformer(LightningModule):
             num_labels: int,
             **kwargs,
     ):
-        super().__init__()
+        super(PLMTransformer,self).__init__()
 
         # access validation outputs, save them in-memory as instance attributes
         self.validation_step_outputs = []
@@ -286,11 +287,7 @@ class PLMTransformer(LightningModule):
                 num_warmup_steps=self.config['warmup_steps'],
                 num_training_steps=self.trainer.estimated_stepping_batches,
             )
-        elif self.scheduler_name == "inverse_sqrt":
-            scheduler = get_inverse_sqrt_schedule(
-                optimizer,
-                num_warmup_steps=self.config['warmup_steps'],
-            )
+
         elif self.scheduler_name == "constant_with_warmup":
             scheduler = get_constant_schedule_with_warmup(
                 optimizer,
