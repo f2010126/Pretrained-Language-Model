@@ -17,6 +17,7 @@ if __name__ == "__main__":
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.',default='ddp_debug')
     parser.add_argument('--task', type=str, help='Which task to run on.',default='cardiff_multi_sentiment')
+    parser.add_argument('--eta', type=int, help='Eta value for BOHB',default=2)
 
     args = parser.parse_args()
 
@@ -29,10 +30,12 @@ if __name__ == "__main__":
 
     m_op=open(os.path.join(working_dir,"Master_output.txt"), "w+")
     m_debugr=open(os.path.join(working_dir,"Master_debug.txt"), "w+")
-    master_command= 'python3 bohb_ray_cluster.py --n_iterations '.format(args.n_iterations) + str(args.n_iterations) + ' --n_workers '.format(args.n_workers) + str(args.n_workers) + ' --min_budget '.format(args.min_budget) + str(args.min_budget) + ' --max_budget '.format(args.max_budget) + str(args.max_budget) + ' --run_id '.format(args.run_id) + str(args.run_id) + ' --nic_name '.format(args.nic_name) + str(args.nic_name) + ' --shared_directory '.format(args.shared_directory) + str(args.shared_directory) + ' --task '.format(args.task) + str(args.task)
+    master_command= 'python3 bohb_ray_cluster.py --n_iterations '.format(args.n_iterations) + str(args.n_iterations) + ' --n_workers '.format(args.n_workers) + str(args.n_workers) + ' --min_budget '.format(args.min_budget) + str(args.min_budget) + ' --max_budget '.format(args.max_budget) + str(args.max_budget) + ' --run_id '.format(args.run_id) + str(args.run_id) + ' --nic_name '.format(args.nic_name) + str(args.nic_name) + ' --shared_directory '.format(args.shared_directory) + str(args.shared_directory) + ' --task '.format(args.task) + str(args.task) + ' --eta '.format(args.eta) + str(args.eta)
     worker_command= master_command + ' --worker'
 
     master_proc = subprocess.Popen(master_command, shell=True,stdout = m_op, stderr = m_debugr)
+    proc_list=[master_proc]
+    print('Started master')
     time.sleep(45) 
     # run for n-1 workers and wait 5 seconds
     for i in range(args.n_workers-1):
@@ -40,11 +43,16 @@ if __name__ == "__main__":
         w_op=open(os.path.join(working_dir,f"Worker_{i+1}_output.txt"), "w+")
         w_debug=open(os.path.join(working_dir,f"Worker_{i+1}_debug.txt"), "w+")
         worker_proc = subprocess.Popen(worker_command, shell=True,stdout = w_op, stderr = w_debug)
+        proc_list.append(worker_proc)
+        print('Started worker {}'.format(i+1))
         time.sleep(5) 
 
     # shell=True executes the program in a new shell if only kept true. Need it
     # w_debug=open("Worker_debug.txt", "w+")
     # w = subprocess.Popen("python3 hp_cluster.py --worker", shell=True,stderr = w_debug)
+        
+    print("Waiting for processes to finish...")
+    exit_codes = [p.wait() for p in proc_list]
 
 	
 

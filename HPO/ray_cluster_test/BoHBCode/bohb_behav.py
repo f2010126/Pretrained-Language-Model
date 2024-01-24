@@ -49,11 +49,19 @@ def predict_bohb_run(min_budget, max_budget, eta, n_iterations):
     print('  With the initial budgets as {}.'.format(initial_budgets))
     print('  A total of {} unique configurations will be sampled.'.format(sum(n_configurations)))
     print('  A total of {} runs will be executed.'.format(n_runs))
+    # print newline
+    print()
 
-def try_predict_bobh_run(self):
-    result = predict_bohb_run(min_budget=1, max_budget=20, eta=2, n_iterations=5)
+
+def try_predict_bobh_run(min_budget=1, max_budget=10, eta=3, n_iterations=70):
+    result = predict_bohb_run(min_budget=min_budget, max_budget=max_budget, eta=eta, n_iterations=n_iterations)
     print(result)
 
 if __name__ == "__main__":
-    try_predict_bobh_run(None)
+    try_predict_bobh_run(min_budget=1, max_budget=4, eta=5, n_iterations=100)
+
+    # for i in range(1, 14):
+    #     print(f'Iteration {i}')
+    #     try_predict_bobh_run(min_budget=1, max_budget=15, eta=12, n_iterations=i)
+
     print('Done')

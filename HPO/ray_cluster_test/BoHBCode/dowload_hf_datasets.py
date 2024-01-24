@@ -24,7 +24,7 @@ def preprocess_dataset():
 def print_dataset_details(dataset_name):
     raw_data_path=os.path.join(os.getcwd(), "raw_datasets")
     data_folder=dataset_name.split("/")[-1]
-    dataset=load_dataset(dataset_name, data_dir=os.path.join(raw_data_path, data_folder))
+    dataset=load_from_disk(dataset_name, data_dir=os.path.join(raw_data_path, data_folder))
     print(dataset) 
 
     pass
@@ -58,10 +58,11 @@ if __name__ == "__main__":
                    'threite/Bundestag-v2' # who said what in the German Bundestag, 
                    'joelniklaus/german_argument_mining', # argument mining
                    'scherrmann/financial_phrasebank_75agree_german', # financial phrasebank'
-                   'Brand24/mms' # might be teh amazon sets
+                   'Brand24/mms', # might be teh amazon sets
                     'akash418/germeval_2017',
                     'gwlms/germeval2018']
-    download_raw_datasets(["gnad10"])
+    download_raw_datasets(['gwlms/germeval2018'])
+
     for dataset_name in dataset_list:
         print("Dataset: ", dataset_name)
         try:

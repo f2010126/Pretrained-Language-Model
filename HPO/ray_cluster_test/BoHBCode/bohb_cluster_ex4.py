@@ -17,7 +17,7 @@ if __name__ == "__main__":
 	parser.add_argument('--min_budget',   type=float, help='Minimum budget used during the optimization.',    default=9)
 	parser.add_argument('--max_budget',   type=float, help='Maximum budget used during the optimization.',    default=243)
 	parser.add_argument('--n_iterations', type=int,   help='Number of iterations performed by the optimizer', default=3)
-	parser.add_argument('--n_workers', type=int,   help='Number of workers to run in parallel.', default=2)
+	parser.add_argument('--n_workers', type=int,   help='Number of workers to run in parallel.', default=1)
 	parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
 	parser.add_argument('--run_id', type=str, help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.', default='ex4')
 	parser.add_argument('--nic_name',type=str, help='Which network interface to use for communication.', default='lo0')
@@ -40,6 +40,9 @@ if __name__ == "__main__":
 		w.load_nameserver_credentials(working_directory=working_dir)
 		w.run(background=False)
 		exit(0)
+	
+	# ensure the file is empty, init the config and results json
+	result_logger = hpres.json_result_logger(directory=working_dir, overwrite=True)
 
 	# Start a nameserver:
 	# We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
@@ -54,6 +57,12 @@ if __name__ == "__main__":
 				nameserver=ns_host, nameserver_port=ns_port)
 	w.run(background=True)
 
+	try:
+		previous_run = hpres.logged_results_to_HBS_result(working_dir)
+	except Exception:
+		print('No prev run')
+		previous_run = None
+
 	# Run an optimizer
 	# We now have to specify the host, and the nameserver information
 	bohb = BOHB(configspace=MyWorker.get_configspace(),
@@ -61,7 +70,9 @@ if __name__ == "__main__":
 				host=host,
 				nameserver=ns_host,
 				nameserver_port=ns_port,
-				min_budget=args.min_budget, max_budget=args.max_budget
+				min_budget=args.min_budget, max_budget=args.max_budget,
+				previous_result=previous_run,
+                result_logger=result_logger,
 				)
 	res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
 
