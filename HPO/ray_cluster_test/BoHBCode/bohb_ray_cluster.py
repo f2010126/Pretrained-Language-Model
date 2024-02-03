@@ -67,7 +67,7 @@ class RayWorker(Worker):
         end_acc=result.metrics['ptl/val_accuracy']
         
         return ({
-                    'loss': 1-end_acc, # remember: HpBandSter always minimizes!
+                    'loss': -end_acc, # remember: HpBandSter always minimizes! so negate the accuracy similar to old
                     'info': result.metrics
             })
 

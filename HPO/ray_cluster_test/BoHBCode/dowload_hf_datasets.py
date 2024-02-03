@@ -2,7 +2,7 @@
 import os
 from re import M
 from datasets import load_dataset, load_from_disk
-from transformers import AutoTokenizer,
+from transformers import AutoTokenizer
 
 # Swiss judegment Test at https://huggingface.co/datasets/rcds/occlusion_swiss_judgment_prediction
 
