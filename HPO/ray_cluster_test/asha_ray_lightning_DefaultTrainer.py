@@ -313,7 +313,7 @@ def tune_mnist(num_samples=10, num_epochs=10, exp_name="tune_mnist"):
         use_gpu = False
         scaling_config = ScalingConfig(
             # no of other nodes?
-            num_workers=3, use_gpu=use_gpu, resources_per_worker={"CPU": 1}
+            num_workers=2, use_gpu=use_gpu, resources_per_worker={"CPU": 1}
         )
     print(f" No of GPUs available : {torch.cuda.device_count()} and accelerator is {accelerator}")
 

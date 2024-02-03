@@ -1,129 +1,74 @@
 import argparse
-from ast import Mod
-import logging
-import multiprocessing
 import os
 import pickle
 import sys
-import time
-import traceback
-import uuid
-import torch.distributed as dist
-
-import ConfigSpace as CS
-import ConfigSpace.hyperparameters as CSH
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
+import time
+import ConfigSpace as CS
+import ConfigSpace.hyperparameters as CSH
 from hpbandster.core.worker import Worker
-from hpbandster.core.dispatcher import Job
 from hpbandster.optimizers import BOHB as BOHB
-import pytorch_lightning
-
-from pytorch_lightning import seed_everything
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
-from pytorch_lightning.strategies import DDPStrategy
-
-
+from numpy import take
+import torch
+import ray
+import uuid
 from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
-
-logger = multiprocessing.log_to_stderr()
-
-try:
-    import torch
-    import torch.utils.data
-    import torch.nn as nn
-    import torch.nn.functional as F
-except ImportError:
-    raise ImportError("For this example you need to install pytorch.")
-
-# local imports
-sys.path.append("/work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_test/BoHBCode")
+import traceback
 
 try:
-    from data_modules import get_datamodule
-    from train_module import PLMTransformer
-    from bert_simple import Model
+    from bohb_ray import transformer_train_function
+
 except ImportError:
-    from data_modules import get_datamodule
-    from train_module import PLMTransformer
-    from bert_simple import Model
+    from bohb_ray import transformer_train_function
 
-
-class PyTorchWorker(Worker):
-    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", **kwargs):
+class RayWorker(Worker):
+    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", seed=42,**kwargs):
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir
         self.log_dir = log_dir
         self.task = task_name
-    
+        self.seed=seed
+        if ray.is_initialized():
+            print('Ray is initialized')
+        else:
+            print('Ray is not initialized')
+
     def compute(self, config, budget, working_directory, *args, **kwargs):
         print(f"Working directory: {working_directory} with devices: {torch.cuda.device_count()}")
         scaling_config = ScalingConfig(num_workers=2, use_gpu=True,resources_per_worker={"CPU": 2, "GPU": 1})
-         # [5] Launch distributed training job.
+
+        run_config=ray.train.RunConfig(
+        checkpoint_config=ray.train.CheckpointConfig(
+            num_to_keep=3,
+            checkpoint_score_attribute="val_accuracy",
+            checkpoint_score_order="max",
+        ))
+        # [5] Launch distributed training job.
         config['epochs']=int(budget)
-        trainer = TorchTrainer(train_func, scaling_config=scaling_config,train_loop_config=config )
+        config['task'] =self.task
+        config['log']=self.log_dir
+        config['data_dir']=self.data_dir
+        config['run_id']=self.run_id
+        config['trial_id']= str(uuid.uuid4().hex)[:5]
+        config['seed']=self.seed
+
+        trainer = TorchTrainer(transformer_train_function,
+                               scaling_config=scaling_config,
+                               train_loop_config=config,
+                                run_config=run_config,
+                                 
+                                )
         result = trainer.fit()
-
-    def old_compute(self, config, budget, working_directory, *args, **kwargs):
-        print("budget aka epochs------> {}".format(budget))
-        # with fork, no torch.cuda allowed
-        seed_everything(142)
-
-        # set up data and model
-        dm = get_datamodule(task_name=self.task, model_name_or_path=config['model_name_or_path'],
-                            max_seq_length=config['max_seq_length'],
-                            train_batch_size=config['per_device_train_batch_size'],
-                            eval_batch_size=config['per_device_eval_batch_size'], data_dir=self.data_dir)
-        dm.setup("fit")
-        model = Model(config=config, num_labels=dm.task_metadata['num_labels'])
-        #PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
-
-        # set up logger
-        trial_id = str(uuid.uuid4().hex)[:5]
-        folder_name = config['model_name_or_path'].split("/")[-1]  # last part is usually the model name
-        log_dir = os.path.join(self.log_dir, f"{self.run_id}_logs/{folder_name}/run_{trial_id}")
-        os.makedirs(log_dir, exist_ok=True)
-
-        # custom_plugins = [LightningEnvironment()]
-
-        trainer = Trainer(
-        max_epochs=int(budget),
-        num_sanity_val_steps=0,
-        devices=2,
-        accelerator="cpu",
-        strategy='ddp_spawn',
-        enable_progress_bar=True,
-        enable_checkpointing=False,
-        limit_train_batches=2,
-        limit_predict_batches=1,
-        limit_val_batches=1,
-        log_every_n_steps=1,
-
-            # accumulate_grad_batches=config['gradient_accumulation_steps'],
-        )
-        # train model
-        try:
-           trainer.fit(model, datamodule=dm)
-        except Exception as e:
-            print(f"Exception in training: with config {config} and budget {budget}")
-            print(e)
-            traceback.print_exc()
-        import random
-        # generate random numbers between 0 and 1
-        num=random.random()
-
-        val_acc = trainer.callback_metrics['val_f1_epoch'].item()
-        print(f"val_acc: {trainer.callback_metrics}")
-        all_metric={ key:value.item() for key, value in trainer.callback_metrics}
-
+        print(result.metrics['ptl/val_accuracy'])
+        end_acc=result.metrics['ptl/val_accuracy']
+        
         return ({
-            'loss': 1 - val_acc,  # remember: HpBandSter always minimizes!
-            'info': {'all_metrics': [0,0],
-                     }
+                    'loss': 1-end_acc, # remember: HpBandSter always minimizes!
+                    'info': result.metrics
+            })
 
-        })
 
     @staticmethod
     def get_configspace():
@@ -172,41 +117,32 @@ class PyTorchWorker(Worker):
         cs.add_hyperparameters([adam_epsilon, gradient_accumulation_steps])
         return cs
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='BoHB MultiNode Example')
+    parser = argparse.ArgumentParser(description='Example 1 - sequential and local execution.')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=6)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer',
-                        default=2)  # no of times to sample??
-    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
-    # master also counts as a worker. so if n_workers is 1, only the master is used
+    parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=2)
+    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
-                        help='A unique run id for this optimization run. An easy option is to use the job id of the '
-                             'clusters scheduler.')
-    parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.', default='lo0')
+                        help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.',
+                        default='UsingRay')
+    parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.',default='eth0')
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.',default='ddp_debug')
-    parser.add_argument("--task-name", type=str, default="sentilex")
+    parser.add_argument('--task_name', type=str, help='Which task to run.',default='sentilex')
 
     args = parser.parse_args()
-    args.run_id = 'BigTrouble'
-
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
 
     # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
     os.makedirs(working_dir, exist_ok=True)
-    # central location for the datasets
-    data_path = os.path.join(os.getcwd(), "tokenized_data")
-    os.makedirs(data_path, exist_ok=True)
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                          run_id=args.run_id, host=host, timeout=3700, )
+        w = RayWorker(run_id=args.run_id, host=host, timeout=3700, task_name=args.task_name)
         # increase timeout to 1 hour
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
@@ -225,9 +161,8 @@ if __name__ == "__main__":
     # not plock!
     # comment out for now.
 
-    w = PyTorchWorker(data_dir=data_path, log_dir=working_dir, task_name=args.task_name,
-                      run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=3700)
+    w = RayWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
+                      timeout=3700, task_name=args.task_name)
     # increase timeout to 1 hour
     w.run(background=True)
 
@@ -239,7 +174,7 @@ if __name__ == "__main__":
 
     # Run an optimizer
     # We now have to specify the host, and the nameserver information
-    bohb = BOHB(configspace=PyTorchWorker.get_configspace(),
+    bohb = BOHB(configspace=RayWorker.get_configspace(),
                 run_id=args.run_id,
                 host=host,
                 nameserver=ns_host,
@@ -251,6 +186,7 @@ if __name__ == "__main__":
                 eta=2,  # Determines how many configurations advance to the next round.
                 )
     try:
+        
         res = bohb.run(n_iterations=args.n_iterations, min_n_workers=args.n_workers)
         id2config = res.get_id2config_mapping()
         incumbent = res.get_incumbent_id()
@@ -280,3 +216,9 @@ if __name__ == "__main__":
     print('A total of %i runs where executed.' % len(res.get_all_runs()))
     print('Total budget corresponds to %.1f full function evaluations.' % (
             sum([r.budget for r in res.get_all_runs()]) / args.max_budget))
+
+
+   
+
+
+    
