@@ -185,6 +185,10 @@ class DataModule(LightningDataModule):
         # remove extra columns, combine columns, rename columns, etc.
         # return here th example only has text, label. Text is string, labels is a number
         raise NotImplementedError
+    
+    def prepare_raw_data(self):
+        # Only called before processing
+        raise NotImplementedError
 
     def prepare_data(self):
         raise NotImplementedError
@@ -304,80 +308,6 @@ class AmazonMultiReview(DataModule):
         else:
             print("File exist. Load Tokenized data in setup.")
 
-class Miam(DataModule):
-    task_metadata = {
-        "num_labels": 31,
-        "label_col": "label",
-        "tokenize_folder_name": "miam",
-    }
-
-    loader_columns = [
-        "datasets_idx",
-        "input_ids",
-        "token_type_ids",
-        "attention_mask",
-        "start_positions",
-        "end_positions",
-        "labels",
-    ]
-
-    def __init__(
-            self,
-            config=Optional[Dict],
-            model_name_or_path: str ="bert-base-uncased",
-            task_name: str = "miam",
-            max_seq_length: int = 128,
-            train_batch_size: int = 32,
-            eval_batch_size: int = 32,
-            label_column: str = 'labels',
-            data_dir='./data',
-            encode_columns=None,
-            **kwargs,
-    ):
-
-        super().__init__()
-        self.prepare_data_per_node = True
-        self.n_cpu = 0
-
-        self.model_name_or_path = model_name_or_path
-        self.task_name = task_name
-        self.max_seq_length = max_seq_length
-        self.train_batch_size = train_batch_size
-        self.eval_batch_size = eval_batch_size
-        self.label_column = label_column
-
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir,self.task_metadata['tokenize_folder_name'])
-        self.tokenised_file=set_file_name(self.model_name_or_path, self.max_seq_length)
-        self.prepare_data_per_node = True
-
-        #  Tokenize the dataset
-        # self.prepare_data()
-
-    def clean_data(self, example):
-        # remove extra columns, combine columns, rename columns, etc.
-        # return here th example only has text, label. Text is string, labels is a number
-        raise NotImplementedError
-
-    def prepare_data(self):
-        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            raw_data_path=os.path.join(os.getcwd(), "raw_datasets")
-            data_folder=self.task_name.split("/")[-1]
-            dataset=datasets.load_dataset(self.task_name, data_dir=os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].rename_column("Label", "labels")
-                dataset[split] = dataset[split].rename_column('Utterance', "text")
-                dataset[split] = dataset[split].map(self.encode_batch, batched=True)
-                dataset[split] = dataset[split].remove_columns(['text'])
-                # Transform to pytorch tensors and only output the required columns
-                # self.dataset[split].set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
-
 class TyqiangzData(DataModule):
     task_metadata = {
         "num_labels": 3,
@@ -416,6 +346,26 @@ class TyqiangzData(DataModule):
 
         self.label_column = label_column
         self.encode_columns = encode_columns
+    
+            # onetime processing of the dataset
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path=os.path.join(os.getcwd(), "raw_datasets")
+            data_folder=self.task_name.split("/")[-1]
+            dataset=datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                # shuffle the dataset
+                dataset[split] = dataset[split].shuffle()
+                dataset[split] = dataset[split].rename_column('label', "labels")
+            
+            # Save this dataset to disk
+            cleaned_data_path=os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
     # no need to clean data for this task so no self.clean() method
@@ -998,7 +948,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
     data_dir=os.path.join(os.getcwd(), "testing_data")
-    dm = get_datamodule(task_name="cardiff_multi_sentiment", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased", max_seq_length=128,
+    dm = get_datamodule(task_name="tyqiangz", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased", max_seq_length=128,
                         train_batch_size=32, eval_batch_size=32,data_dir=data_dir)
     dm.prepare_data()
     dm.setup("fit")

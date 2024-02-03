@@ -58,7 +58,7 @@ def try_predict_bobh_run(min_budget=1, max_budget=10, eta=3, n_iterations=70):
     print(result)
 
 if __name__ == "__main__":
-    try_predict_bobh_run(min_budget=1, max_budget=4, eta=5, n_iterations=100)
+    try_predict_bobh_run(min_budget=1, max_budget=1, eta=3, n_iterations=4)
 
     # for i in range(1, 14):
     #     print(f'Iteration {i}')
