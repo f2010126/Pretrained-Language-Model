@@ -1,4 +1,5 @@
 import argparse
+from math import inf
 import os
 import pickle
 import sys
@@ -16,6 +17,7 @@ import uuid
 from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
 import traceback
+
 
 try:
     from bohb_ray import transformer_train_function
@@ -41,12 +43,14 @@ class RayWorker(Worker):
         scaling_config = ScalingConfig(num_workers=self.gpus, use_gpu=True,resources_per_worker={"CPU": 1, "GPU": 1})
 
         run_config=ray.train.RunConfig(
-            storage_path=os.path.join(self.log_dir, "ray_results"),
-        checkpoint_config=ray.train.CheckpointConfig(
-            num_to_keep=1,
-            checkpoint_score_attribute="ptl/val_accuracy",
-            checkpoint_score_order="max",
-        ))
+            log_to_file=False,
+            # storage_path=os.path.join(self.log_dir, "ray_results"),
+        # checkpoint_config=ray.train.CheckpointConfig(
+        #     num_to_keep=1,
+        #     checkpoint_score_attribute="ptl/val_accuracy",
+        #     checkpoint_score_order="max",
+        # )
+        )
         # [5] Launch distributed training job.
         config['epochs']=int(budget)
         config['task'] =self.task
@@ -65,10 +69,12 @@ class RayWorker(Worker):
         result = trainer.fit()
         self.logger.debug(result.metrics)
         end_acc=result.metrics['ptl/val_accuracy']
+        # pick the required info
+        info_dict ={k: result.metrics[k] for k in result.metrics.keys() & {"train_acc" , "train_loss", "train_f1", "val_acc", "val_acc_epoch", "val_loss", "val_loss_epoch", "val_f1", "val_f1_epoch", "ptl/val_loss", "ptl/val_accuracy", "ptl/val_f1" }}
         
         return ({
-                    'loss': -end_acc, # remember: HpBandSter always minimizes! so negate the accuracy similar to old
-                    'info': result.metrics
+                    'loss': -end_acc, # remember: HpBandSter always minimizes! So we need to negate the accuracy
+                    'info': info_dict
             })
 
 
@@ -132,9 +138,10 @@ if __name__ == "__main__":
     parser.add_argument('--nic_name', type=str, help='Which network interface to use for communication.',default='eth0')
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.',default='ddp_debug')
-    parser.add_argument('--task_name', type=str, help='Which task to run.',default='sentilex')
+    parser.add_argument('--task_name', type=str, help='Which task to run.',default='tagesschau')
     parser.add_argument('--eta', type=int, help='Eta value for BOHB',default=2)
-    parser.add_argument('--num_gpu', type=int, help='Number of GPUs to use',default=4)
+    parser.add_argument('--num_gpu', type=int, help='Number of GPUs to use per worker',default=2)
+    parser.add_argument('--previous_run', type=str, help='Path to the directory of the previous run. Prev run is assumed to be in the same working dir as current',default=None)
 
     args = parser.parse_args()
     # Every process has to lookup the hostname
@@ -142,18 +149,22 @@ if __name__ == "__main__":
 
     # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
+    prev_dir = os.path.join(os.getcwd(), args.shared_directory, args.previous_run)
     os.makedirs(working_dir, exist_ok=True)
+
+    data_dir = os.path.join(os.getcwd(), 'tokenized_data')
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
-        w = RayWorker(run_id=args.run_id, host=host, timeout=3700, task_name=args.task_name, log_dir=working_dir,num_gpu=args.num_gpu)
+        w = RayWorker(run_id=args.run_id, host=host, timeout=3000, task_name=args.task_name, 
+                      log_dir=working_dir,num_gpu=args.num_gpu, data_dir=data_dir)
         # increase timeout to 1 hour
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
         exit(0)
 
     # ensure the file is empty, init the config and results json
-    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=True)
+    result_logger = hpres.json_result_logger(directory=working_dir, overwrite=False)
 
     # Start a nameserver:
     # We now start the nameserver with the host name from above and a random open port (by setting the port to 0)
@@ -165,14 +176,13 @@ if __name__ == "__main__":
     # not plock!
     # comment out for now.
 
-    w = RayWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,
-                      timeout=3700, 
-                      task_name=args.task_name, log_dir=working_dir,num_gpu=args.num_gpu)
+    w = RayWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port,timeout=3000, 
+                  data_dir=data_dir, task_name=args.task_name, log_dir=working_dir,num_gpu=args.num_gpu)
     # increase timeout to 1 hour
     w.run(background=True)
 
     try:
-        previous_run = hpres.logged_results_to_HBS_result(working_dir)
+        previous_run = hpres.logged_results_to_HBS_result(prev_dir)
     except Exception:
         print('No prev run')
         previous_run = None
@@ -186,7 +196,7 @@ if __name__ == "__main__":
                 nameserver_port=ns_port,
                 min_budget=args.min_budget,
                 max_budget=args.max_budget,
-                previous_result=None,
+                previous_result=previous_run,
                 result_logger=result_logger,
                 eta=args.eta,  # Determines how many configurations advance to the next round.
                 )
@@ -223,3 +233,5 @@ if __name__ == "__main__":
     print('A total of %i runs where executed.' % len(res.get_all_runs()))
     print('Total budget corresponds to %.1f full function evaluations.' % (
             sum([r.budget for r in res.get_all_runs()]) / args.max_budget))
+
+

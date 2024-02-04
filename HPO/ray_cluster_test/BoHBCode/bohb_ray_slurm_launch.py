@@ -29,6 +29,7 @@ N_ITR= "NUM_ITER"
 E = "bohb_eta"
 W_GPU = "GPU_WORKERS"
 RUN_ID = "RUN_ID"
+PREV_RUN_ID = "PREV_RUN"
 
 def isTimeFormat(input):
     try:
@@ -76,6 +77,8 @@ if __name__ == "__main__":
     parser.add_argument("--eta", type=int, default=3, help="Eta of the BOHB")
     parser.add_argument("--max_budget", type=int, default=1, help="Max budget of the BOHB")
     parser.add_argument("--n_iter", type=int, default=1, help="Number of iterations of the BOHB")
+    parser.add_argument("--w_gpu", type=int, default=0, help="Number of GPUs used by each trial")
+    parser.add_argument("--prev_run", type=str, default="None", help="Run ID of the previous run")
 
     args = parser.parse_args()
 
@@ -97,6 +100,7 @@ if __name__ == "__main__":
     budget = "{}".format(args.max_budget)
     eta= "{}".format(args.eta)
     n_iter= "{}".format(args.n_iter)
+    w_gpu = "{}".format(args.w_gpu)
 
     if isTimeFormat(args.runtime):
         runtime = args.runtime
@@ -122,8 +126,9 @@ if __name__ == "__main__":
     text = text.replace(max_budget, budget)
     text = text.replace(N_ITR, n_iter)
     text = text.replace(E, eta)
-    text = text.replace(W_GPU, num_workers)
+    text = text.replace(W_GPU, w_gpu)
     text = text.replace(WORKERS, num_workers)
+    text = text.replace(PREV_RUN_ID, args.prev_run)
 
     # ===== Save the script =====
     script_file = "{}.sh".format(job_name)
