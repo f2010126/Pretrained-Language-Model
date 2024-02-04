@@ -88,13 +88,13 @@ if __name__ == "__main__":
     else:
         node_info = ""
 
-    job_name = "{}_{}_trials".format(args.exp_name,args.task_name)
+    job_name = "{}_{}_trials".format(args.task_name,args.exp_name)
 
     partition_option = (
         "#SBATCH --partition={}".format(args.partition) if args.partition else ""
     )
 
-    run_id = "{}_{}".format(args.exp_name, args.task_name)
+    run_id = "{}_{}_{}_{}".format(args.task_name,args.exp_name,args.max_budget,args.eta)
     task = "{}".format(args.task_name)
     num_workers = "{}".format(args.n_workers)
     budget = "{}".format(args.max_budget)
