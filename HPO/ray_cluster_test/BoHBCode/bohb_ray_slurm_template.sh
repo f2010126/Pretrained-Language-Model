@@ -2,7 +2,7 @@
 
 ${PARTITION_OPTION}
 #SBATCH --job-name=${JOB_NAME}
-#SBATCH --output=${JOB_NAME}.log
+#SBATCH --output=/work/dlclarge1/dsengupt-zap_hpo_og/logs/${JOB_NAME}.log
 ${GIVEN_NODE}
 
 ### This script works for any number of nodes
@@ -72,7 +72,7 @@ done
 echo "Ray setup complete"
 
 # run the script. A runner function will start the master and workers with popen. Debug outputs will be saved in respective log files. 
-python3 bohb_runner.py --max_budget MAX_BUDGET --n_iterations NUM_ITER --n_workers NUM_WORKER --run_id Cardiff_115_Runs1 --shared_directory datasetruns --task DATASET_TO_OPTIMSE --eta ETA --num_gpu GPU_WORKERS
+python3 bohb_runner.py --max_budget MAX_BUDGET --n_iterations NUM_ITER --n_workers NUM_WORKER --run_id RUN_ID --shared_directory datasetruns --task DATASET_TO_OPTIMSE --eta bohb_eta --num_gpu GPU_WORKERS
 wait
 echo 'End of Script'
 

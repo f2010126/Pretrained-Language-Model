@@ -4,6 +4,7 @@
 #     --command "rllib train --run PPO --env CartPole-v0"
 
 import argparse
+from re import A
 import subprocess
 import sys
 import time
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import time
 import signal
+
 
 template_file = Path(os.path.abspath(os.path.dirname(__file__))) / "bohb_ray_slurm_template.sh"
 JOB_NAME = "${JOB_NAME}"
@@ -24,8 +26,9 @@ TASK = "DATASET_TO_OPTIMSE"
 max_budget= "MAX_BUDGET"
 WORKERS = "NUM_WORKER"
 N_ITR= "NUM_ITER"
-E = "ETA"
+E = "bohb_eta"
 W_GPU = "GPU_WORKERS"
+RUN_ID = "RUN_ID"
 
 def isTimeFormat(input):
     try:
@@ -82,14 +85,18 @@ if __name__ == "__main__":
     else:
         node_info = ""
 
-    job_name = "{}_trials".format(args.exp_name)
+    job_name = "{}_{}_trials".format(args.exp_name,args.task_name)
 
     partition_option = (
         "#SBATCH --partition={}".format(args.partition) if args.partition else ""
     )
+
+    run_id = "{}_{}".format(args.exp_name, args.task_name)
     task = "{}".format(args.task_name)
-    trial_count = "{}".format(args.num_trials)
     num_workers = "{}".format(args.n_workers)
+    budget = "{}".format(args.max_budget)
+    eta= "{}".format(args.eta)
+    n_iter= "{}".format(args.n_iter)
 
     if isTimeFormat(args.runtime):
         runtime = args.runtime
@@ -110,10 +117,12 @@ if __name__ == "__main__":
     )
     text = text.replace(RUNTIME, runtime)
     # Python Script related
+    text = text.replace(RUN_ID, run_id)
     text = text.replace(TASK, task)
-    text = text.replace(max_budget, str(args.max_budget))
-    text = text.replace(N_ITR, str(args.n_iter))
-    text = text.replace(E, str(args.eta))
+    text = text.replace(max_budget, budget)
+    text = text.replace(N_ITR, n_iter)
+    text = text.replace(E, eta)
+    text = text.replace(W_GPU, num_workers)
     text = text.replace(WORKERS, num_workers)
 
     # ===== Save the script =====
