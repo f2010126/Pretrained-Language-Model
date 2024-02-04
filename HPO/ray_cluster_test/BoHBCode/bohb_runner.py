@@ -1,3 +1,4 @@
+from ast import parse
 import subprocess
 import argparse
 import os
@@ -18,6 +19,7 @@ if __name__ == "__main__":
                         help='A directory that is accessible for all processes, e.g. a NFS share.',default='ddp_debug')
     parser.add_argument('--task', type=str, help='Which task to run on.',default='cardiff_multi_sentiment')
     parser.add_argument('--eta', type=int, help='Eta value for BOHB',default=2)
+    parser.add_argument('--num_gpu', type=int, help='Number of GPUs to use',default=8)
 
     args = parser.parse_args()
 
@@ -25,12 +27,12 @@ if __name__ == "__main__":
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
     os.makedirs(working_dir, exist_ok=True)
 
-        # Entry point here.
+    # Entry point here.
     # open a file in the working directory to signal that we are ready
 
     m_op=open(os.path.join(working_dir,"Master_output.txt"), "w+")
     m_debugr=open(os.path.join(working_dir,"Master_debug.txt"), "w+")
-    master_command= 'python3 bohb_ray_cluster.py --n_iterations '.format(args.n_iterations) + str(args.n_iterations) + ' --n_workers '.format(args.n_workers) + str(args.n_workers) + ' --min_budget '.format(args.min_budget) + str(args.min_budget) + ' --max_budget '.format(args.max_budget) + str(args.max_budget) + ' --run_id '.format(args.run_id) + str(args.run_id) + ' --nic_name '.format(args.nic_name) + str(args.nic_name) + ' --shared_directory '.format(args.shared_directory) + str(args.shared_directory) + ' --task '.format(args.task) + str(args.task) + ' --eta '.format(args.eta) + str(args.eta)
+    master_command= 'python3 bohb_ray_cluster.py --n_iterations {}'.format(args.n_iterations) + ' --n_workers {}'.format(args.n_workers) + ' --min_budget {}'.format(args.min_budget) + ' --max_budget {}'.format(args.max_budget) + ' --run_id {}'.format(args.run_id) + ' --nic_name {}'.format(args.nic_name) + ' --shared_directory {}'.format(args.shared_directory) + ' --task {}'.format(args.task) + ' --eta {}'.format(args.eta) + ' --num_gpu {}'.format(args.num_gpu)
     worker_command= master_command + ' --worker'
 
     master_proc = subprocess.Popen(master_command, shell=True,stdout = m_op, stderr = m_debugr)
