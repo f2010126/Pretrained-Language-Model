@@ -38,7 +38,7 @@ if __name__ == "__main__":
         ' --max_budget {}'.format(args.max_budget) + ' --run_id {}'.format(args.run_id) + \
         ' --nic_name {}'.format(args.nic_name) + ' --shared_directory {}'.format(args.shared_directory) +\
          ' --task {}'.format(args.task) + ' --eta {}'.format(args.eta) + ' --num_gpu {}'.format(args.num_gpu) + \
-        ' --prev_run {}'.format(args.prev_run)
+        ' --previous_run {}'.format(args.prev_run)
     worker_command= master_command + ' --worker'
 
     master_proc = subprocess.Popen(master_command, shell=True,stdout = m_op, stderr = m_debugr)
