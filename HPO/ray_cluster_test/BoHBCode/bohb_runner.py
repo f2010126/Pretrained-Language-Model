@@ -1,4 +1,9 @@
-from ast import parse
+# Add an introduction to the file as a multi-line comment
+"""
+Starts the BOHB optimization process. This is the main file that is run on the master node. Each worker is run as a process but will access
+GPU resources via the Ray cluster. The master node will also access the Ray cluster to submit the workers and to get the results from the workers.
+"""
+
 import subprocess
 import argparse
 import os

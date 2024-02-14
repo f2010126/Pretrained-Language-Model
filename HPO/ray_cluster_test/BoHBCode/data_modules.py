@@ -1,3 +1,6 @@
+"""
+Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for training.
+"""
 from torch.utils.data import DataLoader
 from pytorch_lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
@@ -125,6 +128,12 @@ class GlueModule(LightningDataModule):
 
 
 # Utils
+"""
+Set the file name for the tokenised data
+:param model_name_or_path: the model name or path
+:param max_seq_length: the maximum sequence length
+:return: the file name
+"""
 def set_file_name(model_name_or_path, max_seq_length):
     model_name_or_path= model_name_or_path.replace(r'/','_')
     return f'{model_name_or_path}_{max_seq_length}_tokenized_data.pt'
@@ -883,6 +892,16 @@ class GNAD10(DataModule):
         else:
             print("File exist in Prepare Data. Load Tokenized data in setup.")
 
+"""
+Get the datamodule for the task
+:param task_name: the name of the task
+:param model_name_or_path: the model name or path
+:param max_seq_length: the maximum sequence length
+:param train_batch_size: the training batch size
+:param eval_batch_size: the evaluation batch size
+:param data_dir: the directory where the tokenised data is stored
+:return: the datamodule
+"""
 
 def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                    max_seq_length: int = 128, train_batch_size: int = 32,

@@ -1,4 +1,6 @@
-
+"""
+Observe behavior of BOHB across different hyperparameters. taken from an issue on the hpbandster github.
+"""
 from io import StringIO
 import sys
 import os.path
@@ -11,6 +13,15 @@ import Pyro4.naming
 
 from hpbandster.core.result import Result
 from hpbandster.core.base_iteration import Datum
+
+# Add documenation for the function
+"""
+Observes the behavior of BOHB across different hyperparameters.
+:param min_budget: the smallest budget to consider
+:param max_budget: the largest budget to consider
+:param eta: the eta parameter. Determines how many configurations advance to the next round
+:param n_iterations: how many iterations of SuccessiveHalving to perform
+"""
 
 def predict_bohb_run(min_budget, max_budget, eta, n_iterations):
     """

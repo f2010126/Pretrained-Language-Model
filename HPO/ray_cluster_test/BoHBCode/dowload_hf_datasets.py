@@ -1,9 +1,13 @@
-# download a list of datasets from Hugging Face to a given location
+"""
+Download a list of datasets from Hugging Face to a given location
+"""
+
+
 import os
 from re import M
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
-
+import evaluate
 # Swiss judegment Test at https://huggingface.co/datasets/rcds/occlusion_swiss_judgment_prediction
 
 # Download a list of datasets from Hugging Face to a given location

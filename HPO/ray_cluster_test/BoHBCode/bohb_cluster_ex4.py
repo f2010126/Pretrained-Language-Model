@@ -1,4 +1,7 @@
-
+# Add an introduction to the file as a multi-line comment
+"""
+Example of a simple use case of BOHB. Taken from the original BOHB github repository.
+"""
 from hpbandster.examples.commons import MyWorker
 from hpbandster.optimizers import BOHB as BOHB
 import hpbandster.core.result as hpres

@@ -1,7 +1,12 @@
 # bohb-slurm-launch.py
 # Usage:
 # python bohb-slurm-launch.py --exp-name test \
-#     --command "rllib train --run PPO --env CartPole-v0"
+#     --command "python3 bohb_ray.py" \
+
+"""
+Generates a SLURM script and submits it to the cluster. The script is generated based on a template file and the given arguments.
+Template file is at: <bohb_slurm_template.sh>
+"""
 
 import argparse
 import subprocess

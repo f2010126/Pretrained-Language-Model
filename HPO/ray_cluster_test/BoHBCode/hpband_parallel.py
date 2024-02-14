@@ -1,3 +1,9 @@
+"""
+Old implementation of the BoHB parallel runner. This is the main entry point for the BoHB parallel runner. 
+It is used to start the BoHB optimization process. Each worker is run as a process but will access GPU resources via the Ray cluster.
+ The master node will also access the Ray cluster to submit the workers and to get the results from the workers.
+ Problem is BOHB is process based and so is DDP.
+"""
 import argparse
 from ast import Mod
 import logging

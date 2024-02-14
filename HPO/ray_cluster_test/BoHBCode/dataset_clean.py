@@ -1,3 +1,6 @@
+"""
+More data modules for the different datasets
+"""
 from re import M
 from data_modules import DataModule, set_file_name
 from typing import List, Optional, Dict
@@ -261,7 +264,7 @@ class XStance(Miam):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
-# same thing fot financial phrasebank
+
 class FinancialPhrasebank(Miam):
     task_metadata = {
         "num_labels": 3,
@@ -326,7 +329,6 @@ class FinancialPhrasebank(Miam):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
         
-# same as swiss judgement
 class TargetHateCheck(Miam):
     task_metadata = {
         "num_labels": 6,
@@ -398,7 +400,7 @@ class TargetHateCheck(Miam):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
-# same as TargetHateCheck
+
 class Mlsum(Miam):
     task_metadata = {
         "num_labels": 21,
@@ -473,7 +475,6 @@ class Mlsum(Miam):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
-# same as TargetHateCheck
 class ArgumentMining(Miam):
     task_metadata = {
         "num_labels": 4,
@@ -670,7 +671,6 @@ class Tagesschau(Miam):
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
-
 
 def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                    max_seq_length: int = 128, train_batch_size: int = 32,

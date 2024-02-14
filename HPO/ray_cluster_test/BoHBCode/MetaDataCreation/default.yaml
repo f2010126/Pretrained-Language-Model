@@ -1,0 +1,22 @@
+seed: 42
+model_config:
+  model: 'bert-base-uncased'
+  optimizer:
+    type: 'RAdam'
+    lr: 6.146670783169018e-05
+    momentum: 0.9
+    scheduler: 'cosine_with_warmup'
+    weight_decay: 6.265835646508776e-05
+    adam_epsilon: 8.739737941142407e-08
+
+  training:
+    warmup: 100
+    gradient_accumulation: 4
+  
+  dataset:
+    name: 'sentilex'
+    seq_length: 512
+    batch: 8
+
+
+

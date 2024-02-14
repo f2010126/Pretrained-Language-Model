@@ -1,5 +1,8 @@
+"""
+Full implementation of multi cluster BOHB with Ray Train
+"""
 import argparse
-from math import inf
+
 import os
 import pickle
 import sys
@@ -10,7 +13,7 @@ import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 from hpbandster.core.worker import Worker
 from hpbandster.optimizers import BOHB as BOHB
-from numpy import take
+
 
 import ray
 import uuid
