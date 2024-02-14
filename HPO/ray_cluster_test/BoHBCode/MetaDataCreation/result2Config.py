@@ -1,6 +1,8 @@
 # Created date: 2021-05-20
 import argparse
+from ast import mod
 import os
+from pyexpat import model
 import hpbandster.core.result as hpres
 import yaml
 from copy import deepcopy
@@ -30,7 +32,7 @@ def incumbent_to_yaml(incumbent_config, default_config):
 
     return mc
 
-def create_yaml(working_dir):
+def create_yaml(working_dir, dataset='gnad10'):
     # load the example run from the log files
     result = hpres.logged_results_to_HBS_result(working_dir)
     id2conf = result.get_id2config_mapping()
@@ -40,24 +42,30 @@ def create_yaml(working_dir):
     inc_config = id2conf[inc_id]['config']
 
     # Read the default config
-    default_config_path='default.yaml'
-    with default_config_path.open() as in_stream:
+    default_config_path=os.path.join('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/BoHBCode/MetaDataCreation','default.yaml')
+    with open(default_config_path) as in_stream:
         default_config = yaml.safe_load(in_stream)
     
     format_incumbent = incumbent_to_yaml(inc_config, default_config)
-    output_path = os.path.join(os.getcwd(), f"{format_incumbent['model']}_{format_incumbent['dataset']['name']}_incumbent.yaml")
-    with output_path.open("w") as out_stream:
+    format_incumbent['model_config']['dataset']['name'] = f'{dataset}'
+    # model and dataset are the last part of the name
+    model_name = format_incumbent['model_config']['model'].split('/')[-1]
+    dataset_name = format_incumbent['model_config']['dataset']['name'].split('/')[-1]
+    output_path = os.path.join(os.getcwd(), f"{model_name}_{dataset_name}_incumbent.yaml")
+    with open(output_path, "w+") as out_stream:
         yaml.dump(format_incumbent, out_stream)
-    pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert Run to Yaml')
     parser.add_argument('--result_directory',type=str, 
                         help='Directory with run results pkl file',default='bohb_gnad10_seed_9_150_trials')
+    parser.add_argument('--dataset',type=str, 
+                        help='Dataset name',default='gnad10')
     args = parser.parse_args()
     # where all the run artifacts are kept
     
     working_dir = os.path.join(os.getcwd(),'../datasetruns' ,args.result_directory)
-    create_yaml(working_dir=working_dir)
+    working_dir = os.path.join('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/BoHBCode/datasetruns' ,args.result_directory)
+    create_yaml(working_dir=working_dir, dataset=args.dataset)
 
    
