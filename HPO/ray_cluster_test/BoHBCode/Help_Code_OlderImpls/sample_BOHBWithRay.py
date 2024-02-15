@@ -12,14 +12,13 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
 from ray.train.torch import TorchTrainer
-from ray.train import ScalingConfig, Checkpoint
+from ray.train import ScalingConfig
 
 import time
 import os
 import pickle
 import hpbandster.core.nameserver as hpns
 import hpbandster.core.result as hpres
-from hpbandster.core.dispatcher import Job
 
 import argparse
 from hpbandster.optimizers import BOHB as BOHB
@@ -30,12 +29,7 @@ from torchmetrics import Accuracy
 import tempfile
 import traceback
 from torchvision import transforms
-from ray.train.lightning import (
-    RayDDPStrategy,
-    RayLightningEnvironment,
-    RayTrainReportCallback,
-    prepare_trainer,
-)
+
 import ray
 try:
     import torch
@@ -58,6 +52,8 @@ from hpbandster.core.worker import Worker
 import pytorch_lightning as pl
 import logging
 import torchmetrics
+
+from bohb_ray import fake_ray_train_function
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -210,19 +206,19 @@ class LightningWorker(Worker):
         self.sleep_interval = sleep_interval
 
     def compute(self, config, budget, working_directory, *args, **kwargs):
-        context = ray.init()
-        print("Dashboard URL: http://{}".format(context.dashboard_url))
+        # context = ray.init(ignore_reinit_error=True)
+        # print("Dashboard URL: http://{}".format(context.dashboard_url))
         
         # [4] Configure scaling and resource requirements.
-        scaling_config = ScalingConfig(num_workers=2, use_gpu=True, resources_per_worker={"CPU": 2,})
+        scaling_config = ScalingConfig(num_workers=2, use_gpu=False, resources_per_worker={"CPU": 2,})
         config["num_epochs"]=int(budget)
 
         # [5] Launch distributed training job.
-        trainer = TorchTrainer(train_func, 
+        trainer = TorchTrainer(fake_ray_train_function, 
                                train_loop_config=config,
                                scaling_config=scaling_config)
         result = trainer.fit()
-        print(result.metrics["loss"], result.metrics["mean_valid_loss_collected"])
+        print(result.metrics["loss"])
 
         val_acc=result.metrics["loss"]
         all_metric = result.metrics
@@ -252,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=9)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=243)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=1)
-    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
+    parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
                         help='A unique run id for this optimization run. An easy option is to use the job id of the '
