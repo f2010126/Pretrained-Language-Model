@@ -1,6 +1,5 @@
-"""
-Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for training.
-"""
+"""Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for
+training."""
 from torch.utils.data import DataLoader
 from pytorch_lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
@@ -15,6 +14,7 @@ from typing import List, Optional, Dict
 from filelock import FileLock
 import re
 import logging
+
 
 class GlueModule(LightningDataModule):
     task_text_field_map = {
@@ -134,8 +134,10 @@ Set the file name for the tokenised data
 :param max_seq_length: the maximum sequence length
 :return: the file name
 """
+
+
 def set_file_name(model_name_or_path, max_seq_length):
-    model_name_or_path= model_name_or_path.replace(r'/','_')
+    model_name_or_path = model_name_or_path.replace(r'/', '_')
     return f'{model_name_or_path}_{max_seq_length}_tokenized_data.pt'
 
 
@@ -160,13 +162,13 @@ class DataModule(LightningDataModule):
     def __init__(
             self,
             config=Optional[Dict],
-            model_name_or_path: str ="bert-base-uncased",
-            task_name: str = "mrpc", # same as the hf dataset name
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = "mrpc",  # same as the hf dataset name
             max_seq_length: int = 128,
             train_batch_size: int = 32,
             eval_batch_size: int = 32,
             label_column: str = 'labels',
-            data_dir='./data', # location of the tokenised data
+            data_dir='./data',  # location of the tokenised data
             encode_columns=None,
             **kwargs,
     ):
@@ -183,8 +185,8 @@ class DataModule(LightningDataModule):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir,self.task_metadata['tokenize_folder_name'])
-        self.tokenised_file=set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
         #  Tokenize the dataset
@@ -194,7 +196,7 @@ class DataModule(LightningDataModule):
         # remove extra columns, combine columns, rename columns, etc.
         # return here th example only has text, label. Text is string, labels is a number
         raise NotImplementedError
-    
+
     def prepare_raw_data(self):
         # Only called before processing
         raise NotImplementedError
@@ -218,26 +220,35 @@ class DataModule(LightningDataModule):
     def encode_batch(self, batch):
         """Encodes a batch of input data using the model tokenizer."""
         ## only the 'text' column is encoded
-        tokenized_batch = self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True, padding="max_length")
+        tokenized_batch = self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True,
+                                         padding="max_length")
         # tokenized_batch["labels"] = [.str2int[label] for label in batch["labels"]]
         return tokenized_batch
 
     def train_dataloader(self):
-        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=self.n_cpu, pin_memory=True)
+        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=self.n_cpu,
+                          pin_memory=True)
 
     def val_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
+            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu,
+                              pin_memory=True)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True) for x in
-                    self.eval_splits]
+            return [
+                DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
+                for x in
+                self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu,
+                              pin_memory=True)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True) for x in
-                    self.eval_splits]
+            return [
+                DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu, pin_memory=True)
+                for x in
+                self.eval_splits]
+
 
 # Implementations
 class AmazonMultiReview(DataModule):
@@ -270,9 +281,9 @@ class AmazonMultiReview(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir )
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = []
         # self.text_fields = self.task_text_field_map[task_name]
@@ -317,6 +328,7 @@ class AmazonMultiReview(DataModule):
         else:
             print("File exist. Load Tokenized data in setup.")
 
+
 class TyqiangzData(DataModule):
     task_metadata = {
         "num_labels": 3,
@@ -347,35 +359,35 @@ class TyqiangzData(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir)
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
-    
-            # onetime processing of the dataset
+
+        # onetime processing of the dataset
+
     def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
             print("Prepare Data for the first time")
             print(f'Download clean')
-            raw_data_path=os.path.join(os.getcwd(), "raw_datasets")
-            data_folder=self.task_name.split("/")[-1]
-            dataset=datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
             # remove the columns that are not needed
             for split in dataset.keys():
                 # shuffle the dataset
                 dataset[split] = dataset[split].shuffle()
                 dataset[split] = dataset[split].rename_column('label', "labels")
-            
+
             # Save this dataset to disk
-            cleaned_data_path=os.path.join(os.getcwd(), "cleaned_datasets")
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
-
 
     # no need to clean data for this task so no self.clean() method
     def prepare_data(self):
@@ -530,16 +542,15 @@ class SentiLexData(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir)
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
         self.num_labels = self.task_metadata['num_labels']
-
 
     def clean_data(self, example):
         # rename/ combine columns
@@ -614,15 +625,14 @@ class CardiffMultiSentiment(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir )
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
-
 
     def clean_data(self, example):
         # combine the title and review for text field
@@ -688,16 +698,15 @@ class MtopDomain(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir)
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
         self.num_labels = self.task_metadata['num_labels']
-
 
     def clean_data(self, example):
         # rename/ combine columns
@@ -764,9 +773,9 @@ class GermEval2018Coarse(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir)
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
@@ -781,7 +790,7 @@ class GermEval2018Coarse(DataModule):
             print(f'Download and Tokenise')
             # load a shuffled version of the dataset
             dataset = datasets.load_dataset(self.task_name)
-            dataset=dataset.class_encode_column("coarse-grained")
+            dataset = dataset.class_encode_column("coarse-grained")
             dataset = dataset.rename_column("coarse-grained", "labels")
             dataset = dataset.rename_column("text", "sentence")
             train_testvalid = dataset['train'].train_test_split(test_size=0.3)
@@ -839,16 +848,15 @@ class GNAD10(DataModule):
             **kwargs,
     ):
 
-        super().__init__(model_name_or_path=model_name_or_path,max_seq_length=max_seq_length,
-                         train_batch_size=train_batch_size,eval_batch_size=eval_batch_size,
-                         task_name=task_name,data_dir=data_dir)
+        super().__init__(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                         task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
             encode_columns = ['text']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
         self.num_labels = self.task_metadata['num_labels']
-
 
     def clean_data(self, example):
         # rename/ combine columns
@@ -864,8 +872,8 @@ class GNAD10(DataModule):
             # load a shuffled version of the dataset
             dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
             # 90% train, 10% test + validation
-            dataset=dataset.rename_column("label", "labels")
-            dataset=dataset.rename_column("text", "sentence")
+            dataset = dataset.rename_column("label", "labels")
+            dataset = dataset.rename_column("text", "sentence")
             dataset = dataset.map(self.encode_batch, batched=True)
             train_testvalid = dataset['train'].train_test_split(test_size=0.15)
             # Split the 10% test + valid in half test, half valid
@@ -892,6 +900,7 @@ class GNAD10(DataModule):
         else:
             print("File exist in Prepare Data. Load Tokenized data in setup.")
 
+
 """
 Get the datamodule for the task
 :param task_name: the name of the task
@@ -902,6 +911,7 @@ Get the datamodule for the task
 :param data_dir: the directory where the tokenised data is stored
 :return: the datamodule
 """
+
 
 def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                    max_seq_length: int = 128, train_batch_size: int = 32,
@@ -929,36 +939,36 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                             max_seq_length=max_seq_length,
                             train_batch_size=train_batch_size,
                             eval_batch_size=eval_batch_size,
-                            data_dir=data_dir )
+                            data_dir=data_dir)
 
     elif task_name == "cardiff_multi_sentiment":
         return CardiffMultiSentiment(model_name_or_path=model_name_or_path,
                                      max_seq_length=max_seq_length,
                                      train_batch_size=train_batch_size,
                                      eval_batch_size=eval_batch_size,
-                                     data_dir=data_dir )
+                                     data_dir=data_dir)
     elif task_name == "mtop_domain":
         return MtopDomain(model_name_or_path=model_name_or_path,
-                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
-                                 eval_batch_size=eval_batch_size,
-                                 data_dir=data_dir)
+                          max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                          eval_batch_size=eval_batch_size,
+                          data_dir=data_dir)
 
     elif task_name == "germeval2018_coarse":
         return GermEval2018Coarse(model_name_or_path=model_name_or_path,
-                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
-                                 eval_batch_size=eval_batch_size,
-                                 data_dir=data_dir)
+                                  max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                                  eval_batch_size=eval_batch_size,
+                                  data_dir=data_dir)
 
     elif task_name == "germeval2018_fine":
         return MtopDomain(model_name_or_path=model_name_or_path,
-                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
-                                 eval_batch_size=eval_batch_size,
-                                 data_dir=data_dir)
-    elif task_name=="gnad10":
+                          max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                          eval_batch_size=eval_batch_size,
+                          data_dir=data_dir)
+    elif task_name == "gnad10":
         return GNAD10(model_name_or_path=model_name_or_path,
-                                 max_seq_length=max_seq_length, train_batch_size=train_batch_size,
-                                 eval_batch_size=eval_batch_size,
-                                 data_dir=data_dir)
+                      max_seq_length=max_seq_length, train_batch_size=train_batch_size,
+                      eval_batch_size=eval_batch_size,
+                      data_dir=data_dir)
     else:
         print("Task not found")
         raise NotImplementedError
@@ -966,9 +976,10 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
-    data_dir=os.path.join(os.getcwd(), "testing_data")
-    dm = get_datamodule(task_name="tyqiangz", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased", max_seq_length=128,
-                        train_batch_size=32, eval_batch_size=32,data_dir=data_dir)
-    dm.prepare_data()
+    data_dir = os.path.join(os.getcwd(), "testing_data")
+    dm = get_datamodule(task_name="tyqiangz", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+                        max_seq_length=128,
+                        train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
+    dm.prepare_raw_data()
     dm.setup("fit")
     print(next(iter(dm.val_dataloader())))

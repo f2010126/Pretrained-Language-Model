@@ -1,11 +1,6 @@
 """
 Observe behavior of BOHB across different hyperparameters. taken from an issue on the hpbandster github.
 """
-from io import StringIO
-import sys
-import os.path
-import json
-
 import threading
 import numpy as np
 import Pyro4
@@ -22,6 +17,7 @@ Observes the behavior of BOHB across different hyperparameters.
 :param eta: the eta parameter. Determines how many configurations advance to the next round
 :param n_iterations: how many iterations of SuccessiveHalving to perform
 """
+
 
 def predict_bohb_run(min_budget, max_budget, eta, n_iterations):
     """

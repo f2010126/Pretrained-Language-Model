@@ -1,4 +1,3 @@
-# Add an introduction to the file as a multi-line comment
 """
 Contains training functions to be used with Ray Train. BOHB would also use these functions to train models and evaluate them.
 """
@@ -70,6 +69,7 @@ def transformer_train_function(config):
         max_epochs=int(config['epochs']),
         num_sanity_val_steps=0,
         enable_progress_bar=True,
+        enable_checkpointing=False,
         log_every_n_steps=20,
         val_check_interval=0.25,
         logger=pl.loggers.TensorBoardLogger(log_dir, name="", version=""),
@@ -106,9 +106,8 @@ def train_func(config):
     train_data = FashionMNIST(root='./data', train=True, download=True, transform=transform)
     train_loader = DataLoader(train_data, batch_size=config['batch_size'], shuffle=True)
     # [2] Prepare dataloader.
-    print("Data loading----->")
     train_loader = ray.train.torch.prepare_data_loader(train_loader)
-    print("Data loaded----->")
+
     # Training
     for epoch in range(config['epochs']):
         for images, labels in train_loader:

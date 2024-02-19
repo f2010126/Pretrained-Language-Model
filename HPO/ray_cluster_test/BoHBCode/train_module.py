@@ -12,6 +12,12 @@ from transformers import AutoConfig, AutoModelForSequenceClassification, get_lin
     get_polynomial_decay_schedule_with_warmup, get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup, \
     get_cosine_with_hard_restarts_schedule_with_warmup
 
+# import local file
+try:
+    from .experiment_utilities import remove_checkpoint_files
+except ImportError:
+    from experiment_utilities import remove_checkpoint_files
+
 
 class GLUETransformer(LightningModule):
     def __init__(
@@ -133,7 +139,7 @@ class PLMTransformer(LightningModule):
             num_labels: int,
             **kwargs,
     ):
-        super(PLMTransformer,self).__init__()
+        super(PLMTransformer, self).__init__()
 
         # access validation outputs, save them in-memory as instance attributes
         self.validation_step_outputs = []
@@ -187,16 +193,16 @@ class PLMTransformer(LightningModule):
         # bal_acc = self.train_bal_acc.compute()['balanced_accuracy']
         train_acc = self.train_acc.compute()['accuracy']
 
-        self.log(f'{stage}_acc', acc,  sync_dist=True, on_step=True)
+        self.log(f'{stage}_acc', acc, sync_dist=True, on_step=True)
         self.log(f'{stage}_loss', loss, sync_dist=True, on_step=True)
         self.log(f'{stage}_f1', f1, sync_dist=True, on_step=True)
         # self.log(f'{stage}_bal_acc', bal_acc, sync_dist=True, on_step=True)
-        return {f"loss": loss, f"accuracy": acc, f"f1": f1,}
+        return {f"loss": loss, f"accuracy": acc, f"f1": f1, }
 
     def training_step(self, batch, batch_idx, dataloader_idx=0, print_str="train"):
         result = self.evaluate_step(batch, batch_idx, stage='train')
         self.training_step_outputs.append({"train_loss": result["loss"], "train_accuracy": result["accuracy"],
-                                           "train_f1": result["f1"], # "train_bal_acc": result["bal_acc"]
+                                           "train_f1": result["f1"],  # "train_bal_acc": result["bal_acc"]
                                            })
 
         return result
@@ -204,7 +210,7 @@ class PLMTransformer(LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0, print_str="val"):
         result = self.evaluate_step(batch, batch_idx, stage='val')
         self.validation_step_outputs.append({"val_loss": result["loss"], "val_accuracy": result["accuracy"],
-                                             "val_f1": result["f1"], # "val_bal_acc": result["bal_acc"]
+                                             "val_f1": result["f1"],  # "val_bal_acc": result["bal_acc"]
                                              })
         return result
 
@@ -219,12 +225,12 @@ class PLMTransformer(LightningModule):
         # avg_bal_acc = mean([x["train_bal_acc"] for x in outputs])
 
         self.log("ptl/train_loss", avg_loss, on_step=False, on_epoch=True, logger=True, sync_dist=True)
-        self.log("ptl/train_accuracy", avg_acc, on_step=False, on_epoch=True,  logger=True,
+        self.log("ptl/train_accuracy", avg_acc, on_step=False, on_epoch=True, logger=True,
                  sync_dist=True)
-        self.log("ptl/train_f1", avg_f1, on_step=False, on_epoch=True,  logger=True, sync_dist=True)
-       #  self.log("ptl/train_bal_acc", avg_bal_acc, on_step=False, on_epoch=True,  logger=True, sync_dist=True)
+        self.log("ptl/train_f1", avg_f1, on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        #  self.log("ptl/train_bal_acc", avg_bal_acc, on_step=False, on_epoch=True,  logger=True, sync_dist=True)
 
-        return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1,}
+        return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1, }
 
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs
@@ -238,7 +244,7 @@ class PLMTransformer(LightningModule):
         self.log("ptl/val_f1", avg_f1, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         # self.log("ptl/val_bal_acc", avg_bal_acc, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         logging.debug("on_validation_epoch_end--->")
-        return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1,}
+        return {"loss": avg_loss, "acc": avg_acc, "f1": avg_f1, }
 
     def on_validation_end(self):
         # last hook that's used by Trainer in ray.
@@ -262,10 +268,10 @@ class PLMTransformer(LightningModule):
 
         if self.optimizer_name == "AdamW":
             optimizer = AdamW(optimizer_grouped_parameters, lr=self.config['learning_rate'],
-                             )
+                              )
         elif self.optimizer_name == "Adam":
             optimizer = Adam(optimizer_grouped_parameters, lr=self.config['learning_rate'],
-                            )
+                             )
         elif self.optimizer_name == "SGD":
             optimizer = torch.optim.SGD(optimizer_grouped_parameters, lr=self.config['learning_rate'],
                                         momentum=self.config['sgd_momentum'])

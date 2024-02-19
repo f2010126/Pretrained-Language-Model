@@ -1,11 +1,10 @@
-import matplotlib.pyplot as plt
+import argparse
+import os
+
 import hpbandster.core.result as hpres
 import hpbandster.visualization as hpvis
+import matplotlib.pyplot as plt
 
-import argparse
-import logging
-import multiprocessing
-import os
 
 def realtime_learning_curves(runs):
     """
@@ -19,17 +18,17 @@ def realtime_learning_curves(runs):
     """
     sr = sorted(runs, key=lambda r: r.budget)
     lc = list(filter(lambda t: not t[1] is None, [(r.time_stamps['finished'], r.info['test accuracy']) for r in sr]))
-    return([lc,])
+    return ([lc, ])
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='View Curves')
-    parser.add_argument('--dir', type=str, help='Directory of the results.', default='datasetruns/bohb_gnad10_seed_9_150_trials')
+    parser.add_argument('--dir', type=str, help='Directory of the results.', default='datasetruns'
+                                                                                     '/bohb_gnad10_seed_9_150_trials')
     args = parser.parse_args()
 
     # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), args.dir)
-
 
     # load the example run from the log files
     result = hpres.logged_results_to_HBS_result(working_dir)
@@ -55,7 +54,7 @@ if __name__ == "__main__":
 
     print('Best found configuration:')
     print(inc_config)
-   # print('It achieved accuracies of %f (validation) and %f (test).' % (1 - inc_loss, inc_test_loss))
+    # print('It achieved accuracies of %f (validation) and %f (test).' % (1 - inc_loss, inc_test_loss))
 
     # Let's plot the observed losses grouped by budget,
     hpvis.losses_over_time(all_runs)
