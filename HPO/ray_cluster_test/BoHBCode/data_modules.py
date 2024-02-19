@@ -15,6 +15,11 @@ from filelock import FileLock
 import re
 import logging
 
+# local imports
+from dataset_clean import Bundestag, Miam, Mlsum, SwissJudgement,Tagesschau, \
+TargetHateCheck,FinancialPhrasebank, XStance,ArgumentMining, \
+Bundestag, Mlsum
+
 
 class GlueModule(LightningDataModule):
     task_text_field_map = {
@@ -599,7 +604,7 @@ class CardiffMultiSentiment(DataModule):
     task_metadata = {
         "num_labels": 3,
         "label_col": "labels",
-        "tokenize_folder_name": "cardiff_multi_sentiment",
+        "tokenize_folder_name": "tweet_sentiment_multilingual",
     }
 
     loader_columns = [
@@ -969,6 +974,36 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                       max_seq_length=max_seq_length, train_batch_size=train_batch_size,
                       eval_batch_size=eval_batch_size,
                       data_dir=data_dir)
+    
+        elif task_name == "miam":
+        return Miam(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                    train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "swiss_judgment_prediction":
+        return SwissJudgement(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                              train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "x_stance":
+        return XStance(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                       train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "financial_phrasebank_75agree_german":
+        return FinancialPhrasebank(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                                   train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
+                                   data_dir=data_dir)
+    elif task_name == "hatecheck-german":
+        return TargetHateCheck(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                               train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "mlsum":
+        return Mlsum(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                     train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "german_argument_mining":
+        return ArgumentMining(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                              train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "Bundestag-v2":
+        return Bundestag(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                         train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "tagesschau":
+        return Tagesschau(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                          train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+
     else:
         print("Task not found")
         raise NotImplementedError
