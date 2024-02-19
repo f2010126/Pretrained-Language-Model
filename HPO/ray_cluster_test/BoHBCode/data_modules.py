@@ -15,123 +15,6 @@ from filelock import FileLock
 import re
 import logging
 
-# local imports
-from dataset_clean import Bundestag, Miam, Mlsum, SwissJudgement,Tagesschau, \
-TargetHateCheck,FinancialPhrasebank, XStance,ArgumentMining, \
-Bundestag, Mlsum
-
-
-class GlueModule(LightningDataModule):
-    task_text_field_map = {
-        "cola": ["sentence"],
-        "sst2": ["sentence"],
-        "mrpc": ["sentence1", "sentence2"],
-        "qqp": ["question1", "question2"],
-        "stsb": ["sentence1", "sentence2"],
-        "mnli": ["premise", "hypothesis"],
-        "qnli": ["question", "sentence"],
-        "rte": ["sentence1", "sentence2"],
-        "wnli": ["sentence1", "sentence2"],
-        "ax": ["premise", "hypothesis"],
-    }
-
-    glue_task_num_labels = {
-        "cola": 2,
-        "sst2": 2,
-        "mrpc": 2,
-        "qqp": 2,
-        "stsb": 1,
-        "mnli": 3,
-        "qnli": 2,
-        "rte": 2,
-        "wnli": 2,
-        "ax": 3,
-    }
-
-    loader_columns = [
-        "datasets_idx",
-        "input_ids",
-        "token_type_ids",
-        "attention_mask",
-        "start_positions",
-        "end_positions",
-        "labels",
-    ]
-
-    def __init__(
-            self,
-            model_name_or_path: str,
-            task_name: str = "mrpc",
-            max_seq_length: int = 128,
-            train_batch_size: int = 32,
-            eval_batch_size: int = 32,
-            **kwargs,
-    ):
-        super().__init__()
-        self.model_name_or_path = model_name_or_path
-        self.task_name = task_name
-        self.max_seq_length = max_seq_length
-        self.train_batch_size = train_batch_size
-        self.eval_batch_size = eval_batch_size
-
-        # self.text_fields = self.task_text_field_map[task_name]
-        self.num_labels = self.glue_task_num_labels[task_name]
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.prepare_data_per_node = True
-        self.n_cpu = 10
-
-    def prepare_data(self):
-        # called only on 1 GPU per node. Do not do any self.x assignments here
-        # download, split tokenise data and save to disk
-        print(f'Download and Tokenise')
-        dataset = datasets.load_dataset("glue", self.task_name)
-
-        # split the train set into train and test
-        spare_data = dataset['train'].train_test_split(test_size=0.025)
-        dataset['train'] = spare_data['train']
-        dataset['test'] = spare_data['test']
-
-        for split in dataset.keys():
-            dataset[split] = dataset[split].map(self.encode_batch, batched=True)
-            dataset[split] = dataset[split].rename_column("label", "labels")
-            # Transform to pytorch tensors and only output the required columns
-            # self.dataset[split].set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-
-            columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-            dataset[split].set_format(type="torch", columns=columns)
-
-        # save the tokenized data to disk
-        torch.save(dataset, 'tokenized_data.pt')
-        print(f'Dataset Tokenised')
-
-    def setup(self, stage: str):
-        # load data here
-        self.dataset = torch.load('tokenized_data.pt')
-        self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
-        print('dataset loaded')
-
-    def encode_batch(self, batch):
-        """Encodes a batch of input data using the model tokenizer."""
-        return self.tokenizer(batch["sentence"], max_length=self.max_seq_length, truncation=True, padding="max_length")
-
-    def train_dataloader(self):
-        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=self.n_cpu)
-
-    def val_dataloader(self):
-        if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
-        elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
-                    self.eval_splits]
-
-    def test_dataloader(self):
-        if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=self.n_cpu)
-        elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=self.n_cpu) for x in
-                    self.eval_splits]
-
-
 # Utils
 """
 Set the file name for the tokenised data
@@ -906,6 +789,684 @@ class GNAD10(DataModule):
             print("File exist in Prepare Data. Load Tokenized data in setup.")
 
 
+# More Implementations
+class Miam(DataModule):
+    task_metadata = {
+        "num_labels": 31,
+        "label_col": "label",
+        "tokenize_folder_name": "miam",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = "miam",
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+        #  Tokenize the dataset
+        # self.prepare_data()
+
+    # onetime processing of the dataset
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].rename_column("Label", "labels")
+                dataset[split] = dataset[split].rename_column('Utterance', "sentence")
+                dataset[split] = dataset[split].remove_columns(['Speaker', 'Idx', 'Dialogue_ID', 'Dialogue_Act'])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, data_folder))
+
+    # For processed data that just needs to be tokenised
+    def prepare_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Tokenised File not exist")
+            print(f'Tokenise the cleaned data')
+            clean_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            try:
+                dataset = datasets.load_from_disk(os.path.join(clean_data_path, data_folder))
+                for split in dataset.keys():
+                    dataset[split] = dataset[split].map(self.encode_batch, batched=True)
+                    dataset[split] = dataset[split].remove_columns(['sentence'])
+
+                    # Transform to pytorch tensors and only output the required columns
+                    columns = [c for c in dataset[split].column_names if c in self.loader_columns]
+                    dataset[split].set_format(type="torch", columns=columns)
+
+            except Exception as e:
+                print("Error loading dataset: ", self.task_name)
+                print(e)
+                return
+
+            try:
+                with FileLock(f"Tokenised.lock"):
+                    cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+            except:
+                print("File already exist")
+
+
+# same thing for swiss judgement
+class SwissJudgement(Miam):
+    task_metadata = {
+        "num_labels": 3,
+        "label_col": "label",
+        "tokenize_folder_name": "swiss_judgment_prediction",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'rcds/swiss_judgment_prediction',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+        #  Tokenize the dataset
+        # self.prepare_data()
+
+    # onetime processing of the dataset
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].rename_column('label', "labels")
+                dataset[split] = dataset[split].rename_column('text', "sentence")
+                dataset[split] = dataset[split].remove_columns(
+                    ["id", "year", "language", "region", "canton", "legal area"])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class XStance(Miam):
+    task_metadata = {
+        "num_labels": 10,
+        "label_col": "label",
+        "tokenize_folder_name": "x_stance",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'x_stance',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+        #  Tokenize the dataset
+        # self.prepare_data()
+
+    def clean_data(self, example):
+        # remove extra columns, combine columns, rename columns, etc.
+        # return here th example only has text, label. Text is string, labels is a number
+        example['sentence'] = ["{} {}".format(title, review) for title, review in
+                               zip(example['question'], example['comment'])]
+        return example
+
+    # onetime processing of the dataset
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].class_encode_column(
+                    'topic')  # since we want to classify based on topic, encode it
+                dataset[split] = dataset[split].rename_column('topic', "labels")
+                dataset[split] = dataset[split].map(self.clean_data, batched=True)
+                dataset[split] = dataset[split].remove_columns(
+                    ['question', 'id', 'question_id', 'language', 'comment', 'label', 'numerical_label', 'author'])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            print(f'clean path-> {cleaned_data_path}')
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class FinancialPhrasebank(Miam):
+    task_metadata = {
+        "num_labels": 3,
+        "label_col": "label",
+        "tokenize_folder_name": "financial_phrasebank_75agree_german",
+    }
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'scherrmann/financial_phrasebank_75agree_german',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+        # onetime processing of the dataset
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                # shuffle the dataset
+                dataset[split] = dataset[split].shuffle()
+                dataset[split] = dataset[split].rename_column('label', "labels")
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class TargetHateCheck(Miam):
+    task_metadata = {
+        "num_labels": 6,
+        "label_col": "label",
+        "tokenize_folder_name": "hatecheck-german",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'Paul/hatecheck-german',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+        # onetime processing of the dataset
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].filter(lambda example: example['target_ident'] != 'null')
+                dataset[split] = dataset[split].class_encode_column(
+                    'target_ident')  # since we want to classify based on topic, encode it
+                dataset[split] = dataset[split].rename_column('target_ident', "labels")
+                dataset[split] = dataset[split].rename_column('test_case', "sentence")
+                # remove other columns
+                dataset[split] = dataset[split].remove_columns(
+                    ['mhc_case_id', 'functionality', 'label_gold', 'ref_case_id', 'ref_templ_id',
+                     'templ_id', 'case_templ', 'gender_male', 'gender_female', 'label_annotated',
+                     'label_annotated_maj', 'disagreement_in_case', 'disagreement_in_template'])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class Mlsum(Miam):
+    task_metadata = {
+        "num_labels": 21,
+        "label_col": "label",
+        "tokenize_folder_name": "mlsum",
+    }
+
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'mlsum',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+    def clean_data(self, example):
+        # remove extra columns, combine columns, rename columns, etc.
+        # return here th example only has text, label. Text is string, labels is a number
+        example['sentence'] = ["{} {}".format(title, review) for title, review in
+                               zip(example['title'], example['text'])]
+        return example
+
+        # onetime processing of the dataset
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].class_encode_column(
+                    'topic')  # since we want to classify based on topic, encode it
+                dataset[split] = dataset[split].rename_column('topic', "labels")
+                dataset[split] = dataset[split].map(self.clean_data, batched=True)
+                # remove other columns
+                dataset[split] = dataset[split].remove_columns(['title', 'summary', 'url', 'date'])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class ArgumentMining(Miam):
+    task_metadata = {
+        "num_labels": 4,
+        "label_col": "label",
+        "tokenize_folder_name": "german_argument_mining",
+    }
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'joelniklaus/german_argument_mining',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].class_encode_column(
+                    'label')  # since we want to classify based on topic, encode it
+                dataset[split] = dataset[split].rename_column('label', "labels")
+                dataset[split] = dataset[split].rename_column('input_sentence', "sentence")
+                # remove other columns
+                dataset[split] = dataset[split].remove_columns(['file_number', 'context_before', 'context_after'])
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+# who said what in the German Bundestag
+class Bundestag(Miam):
+    task_metadata = {
+        "num_labels": 7,
+        "label_col": "label",
+        "tokenize_folder_name": "Bundestag-v2",
+    }
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'threite/Bundestag-v2',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                # remove the rows that have no party
+                dataset[split] = dataset[split].filter(lambda example: example['party'] != '')
+                dataset[split] = dataset[split].class_encode_column(
+                    'party')  # since we want to classify based on topic, encode it
+                dataset[split] = dataset[split].rename_column('party', "labels")
+                dataset[split] = dataset[split].rename_column('text', "sentence")
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
+
+class Tagesschau(Miam):
+    task_metadata = {
+        "num_labels": 7,
+        "label_col": "label",
+        "tokenize_folder_name": "tagesschau",
+    }
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'tillschwoerer/tagesschau',
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            label_column: str = 'labels',
+            data_dir='./data',
+            encode_columns=None,
+            **kwargs,
+    ):
+        super().__init__()
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+
+        self.model_name_or_path = model_name_or_path
+        self.task_name = task_name
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.label_column = label_column
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.prepare_data_per_node = True
+
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # remove the columns that are not needed
+            for split in dataset.keys():
+                dataset[split] = dataset[split].rename_column('label', "labels")
+                dataset[split] = dataset[split].rename_column('text', "sentence")
+                # remove other columns
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+
 """
 Get the datamodule for the task
 :param task_name: the name of the task
@@ -975,7 +1536,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                       eval_batch_size=eval_batch_size,
                       data_dir=data_dir)
     
-        elif task_name == "miam":
+    elif task_name == "miam":
         return Miam(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
                     train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
     elif task_name == "swiss_judgment_prediction":
@@ -1012,7 +1573,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
     data_dir = os.path.join(os.getcwd(), "testing_data")
-    dm = get_datamodule(task_name="tyqiangz", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+    dm = get_datamodule(task_name="german_argument_mining", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                         max_seq_length=128,
                         train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
     dm.prepare_raw_data()
