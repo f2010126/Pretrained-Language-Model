@@ -1,5 +1,6 @@
 """Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for
 training."""
+from hmac import new
 from torch.utils.data import DataLoader
 from pytorch_lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
@@ -90,7 +91,32 @@ class DataModule(LightningDataModule):
         raise NotImplementedError
 
     def prepare_data(self):
-        raise NotImplementedError
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Tokenised File not exist")
+            print(f'Tokenise the cleaned data')
+            clean_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            try:
+                dataset = datasets.load_from_disk(os.path.join(clean_data_path, data_folder))
+                for split in dataset.keys():
+                    dataset[split] = dataset[split].map(self.encode_batch, batched=True)
+                    dataset[split] = dataset[split].remove_columns(['sentence'])
+
+                    # Transform to pytorch tensors and only output the required columns
+                    columns = [c for c in dataset[split].column_names if c in self.loader_columns]
+                    dataset[split].set_format(type="torch", columns=columns)
+
+            except Exception as e:
+                print("Error loading dataset: ", self.task_name)
+                print(e)
+                return
+
+            try:
+                with FileLock(f"Tokenised.lock"):
+                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
+                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+            except:
+                print("File already exist")
 
     def setup(self, stage: str):
         logging.debug(f'Setup data in directory: {self.dir_path}')
@@ -251,7 +277,7 @@ class TyqiangzData(DataModule):
                          train_batch_size=train_batch_size, eval_batch_size=eval_batch_size,
                          task_name=task_name, data_dir=data_dir)
         if encode_columns is None:
-            encode_columns = ['text']
+            encode_columns = ['sentence']
 
         self.label_column = label_column
         self.encode_columns = encode_columns
@@ -265,11 +291,11 @@ class TyqiangzData(DataModule):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                # shuffle the dataset
-                dataset[split] = dataset[split].shuffle()
-                dataset[split] = dataset[split].rename_column('label', "labels")
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.rename_column('text', "sentence")
+            dataset = dataset.remove_columns(["source"])
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -277,37 +303,6 @@ class TyqiangzData(DataModule):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
-    # no need to clean data for this task so no self.clean() method
-    def prepare_data(self):
-        # called only on 1 GPU per node. Do not do any self.x assignments here
-        # download, split tokenise data and save to disk
-
-        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            dataset = datasets.load_dataset(self.task_name, 'german')
-            dataset = dataset.rename_column("label", "labels")
-            dataset = dataset.rename_column("text", "sentence")
-            dataset = dataset.map(self.encode_batch, batched=True)
-            for split in dataset.keys():
-                remove_features = set(dataset[split].features) ^ set(
-                    [self.label_column] + ["input_ids", "attention_mask"])
-                dataset[split] = dataset[split].remove_columns(remove_features)
-
-                # Transform to pytorch tensors and only output the required columns
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
-
-            # save the tokenized data to disk
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
-
-        else:
-            print("File exist. Load Tokenized data in setup.")
 
 
 class OmpData(DataModule):
@@ -363,6 +358,22 @@ class OmpData(DataModule):
                                zip(example['Headline'], example['Body'])]
         example['labels'] = example['Category']
         return example
+    
+    def prepare_raw_data(self):
+        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('Category', "labels")
+
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
     def prepare_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
@@ -404,7 +415,7 @@ class SentiLexData(DataModule):
     task_metadata = {
         "num_labels": 2,
         "label_col": "labels",
-        "tokenize_folder_name": "sentilex",
+        "tokenize_folder_name": "senti_lex",
     }
 
     loader_columns = [
@@ -445,42 +456,32 @@ class SentiLexData(DataModule):
         example['sentence'] = example['word']
         example['labels'] = example['sentiment']
         return example
-
-    def prepare_data(self):
-
+    
+    def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de', split='train').shuffle(seed=42)
-            # 90% train, 10% test + validation
-            dataset = dataset.map(self.clean_data, batched=True)
-            dataset = dataset.map(self.encode_batch, batched=True)
-            train_testvalid = dataset.train_test_split(test_size=0.1)
-            # Split the 10% test + valid in half test, half valid
-            test_valid = train_testvalid['test'].train_test_split(test_size=0.5)
-            # gather everyone if you want to have a single DatasetDict
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            # train test val split 70 10 30
+            train_testvalid = dataset['train'].train_test_split(test_size=0.3)
+            test_valid = train_testvalid['test'].train_test_split(test_size=0.33)
             dataset = DatasetDict({
                 'train': train_testvalid['train'],
                 'test': test_valid['test'],
                 'validation': test_valid['train']})
-            for split in dataset.keys():
-                remove_features = set(dataset[split].features) ^ set(
-                    [self.label_column] + ["input_ids", "attention_mask"])
-                dataset[split] = dataset[split].remove_columns(remove_features)
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
+            
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('sentiment', "labels")
+            dataset = dataset.rename_column('word', "sentence")
 
-            # save the tokenized data to disk
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
 
-        else:
-            print("File exist in Prepare Data. Load Tokenized data in setup.")
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
 class CardiffMultiSentiment(DataModule):
@@ -526,34 +527,24 @@ class CardiffMultiSentiment(DataModule):
         # combine the title and review for text field
         example['sentence'] = example['text']
         return example
-
-    def prepare_data(self):
-
+    
+    def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'german').shuffle(seed=42)
-            dataset = dataset.map(self.clean_data, batched=True)
-            dataset = dataset.map(self.encode_batch, batched=True)
-            dataset = dataset.rename_column("label", "labels")
-            for split in dataset.keys():
-                remove_features = set(dataset[split].features) ^ set(
-                    [self.label_column] + ["input_ids", "attention_mask"])
-                dataset[split] = dataset[split].remove_columns(remove_features)
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+             # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.rename_column('text', "sentence")
 
-            # save the tokenized data to disk
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
-
-        else:
-            print("File exist. Load Tokenized data in setup.")
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
 class MtopDomain(DataModule):
@@ -601,34 +592,27 @@ class MtopDomain(DataModule):
         example['sentence'] = example['word']
         example['labels'] = example['sentiment']
         return example
-
-    def prepare_data(self):
-
+    
+    def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de')
-            dataset = dataset.rename_column("label", "labels")
-            dataset = dataset.rename_column("text", "sentence")
-            dataset = dataset.map(self.encode_batch, batched=True)
-            for split in dataset.keys():
-                remove_features = set(dataset[split].features) ^ set(
-                    [self.label_column] + ["input_ids", "attention_mask"])
-                dataset[split] = dataset[split].remove_columns(remove_features)
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
+            print("Prepare Data for the first time")
+            print(f'Download clean')
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+            
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.class_encode_column('label')
+            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.rename_column('text', "sentence")
+            dataset = dataset.remove_columns(["id", "label_text"])
 
-            # save the tokenized data to disk
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
-
-        else:
-            print("File exist in Prepare Data. Load Tokenized data in setup.")
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
 class GermEval2018Coarse(DataModule):
@@ -751,42 +735,29 @@ class GNAD10(DataModule):
         example['sentence'] = example['word']
         example['labels'] = example['sentiment']
         return example
-
-    def prepare_data(self):
-
+    
+    def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Prepare Data File not exist")
-            print(f'Download and Tokenise')
-            # load a shuffled version of the dataset
-            dataset = datasets.load_dataset(self.task_name, 'de').shuffle(seed=42)
-            # 90% train, 10% test + validation
+            print("Prepare Data for the first time")
+            raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
+            data_folder = self.task_name.split("/")[-1]
+            dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+
+            dataset = dataset.shuffle()
             dataset = dataset.rename_column("label", "labels")
             dataset = dataset.rename_column("text", "sentence")
-            dataset = dataset.map(self.encode_batch, batched=True)
-            train_testvalid = dataset['train'].train_test_split(test_size=0.15)
-            # Split the 10% test + valid in half test, half valid
-            # gather everyone if you want to have a single DatasetDict
+            train_testvalid = dataset['train'].train_test_split(test_size=0.25)
+
             dataset = DatasetDict({
                 'train': train_testvalid['train'],
                 'test': dataset['test'],
                 'validation': train_testvalid['test']})
-            for split in dataset.keys():
-                remove_features = set(dataset[split].features) ^ set(
-                    [self.label_column] + ["input_ids", "attention_mask"])
-                dataset[split] = dataset[split].remove_columns(remove_features)
-                columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                dataset[split].set_format(type="torch", columns=columns)
 
-            # save the tokenized data to disk
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
-
-        else:
-            print("File exist in Prepare Data. Load Tokenized data in setup.")
+            # Save this dataset to disk
+            cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            if not os.path.exists(cleaned_data_path):
+                os.makedirs(cleaned_data_path)
+            dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
 # More Implementations
@@ -848,48 +819,18 @@ class Miam(DataModule):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].rename_column("Label", "labels")
-                dataset[split] = dataset[split].rename_column('Utterance', "sentence")
-                dataset[split] = dataset[split].remove_columns(['Speaker', 'Idx', 'Dialogue_ID', 'Dialogue_Act'])
+
+
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column("Label", "labels")
+            dataset = dataset.rename_column('Utterance', "sentence")
+            dataset= dataset.remove_columns(['Speaker', 'Idx', 'Dialogue_ID', 'Dialogue_Act'])
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, data_folder))
-
-    # For processed data that just needs to be tokenised
-    def prepare_data(self):
-        if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
-            print("Tokenised File not exist")
-            print(f'Tokenise the cleaned data')
-            clean_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
-            data_folder = self.task_name.split("/")[-1]
-            try:
-                dataset = datasets.load_from_disk(os.path.join(clean_data_path, data_folder))
-                for split in dataset.keys():
-                    dataset[split] = dataset[split].map(self.encode_batch, batched=True)
-                    dataset[split] = dataset[split].remove_columns(['sentence'])
-
-                    # Transform to pytorch tensors and only output the required columns
-                    columns = [c for c in dataset[split].column_names if c in self.loader_columns]
-                    dataset[split].set_format(type="torch", columns=columns)
-
-            except Exception as e:
-                print("Error loading dataset: ", self.task_name)
-                print(e)
-                return
-
-            try:
-                with FileLock(f"Tokenised.lock"):
-                    cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
-                    Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
-                    torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
-            except:
-                print("File already exist")
-
 
 # same thing for swiss judgement
 class SwissJudgement(Miam):
@@ -950,12 +891,13 @@ class SwissJudgement(Miam):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].rename_column('label', "labels")
-                dataset[split] = dataset[split].rename_column('text', "sentence")
-                dataset[split] = dataset[split].remove_columns(
-                    ["id", "year", "language", "region", "canton", "legal area"])
+
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.rename_column('text', "sentence")
+            dataset = dataset.remove_columns(
+                ["id", "year", "language", "region", "canton", "legal area", 'source_language'])
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1030,17 +972,16 @@ class XStance(Miam):
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
             # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].class_encode_column(
-                    'topic')  # since we want to classify based on topic, encode it
-                dataset[split] = dataset[split].rename_column('topic', "labels")
-                dataset[split] = dataset[split].map(self.clean_data, batched=True)
-                dataset[split] = dataset[split].remove_columns(
-                    ['question', 'id', 'question_id', 'language', 'comment', 'label', 'numerical_label', 'author'])
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.map(self.clean_data, batched=True)
+            dataset = dataset.class_encode_column('topic')  # since we want to classify based on topic, encode it
+            dataset = dataset.rename_column('topic', "labels")
+            dataset = dataset.remove_columns(
+                ['question', 'id', 'question_id', 'language', 'comment', 'label', 'numerical_label', 'author']) 
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
-            print(f'clean path-> {cleaned_data_path}')
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
@@ -1100,11 +1041,10 @@ class FinancialPhrasebank(Miam):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                # shuffle the dataset
-                dataset[split] = dataset[split].shuffle()
-                dataset[split] = dataset[split].rename_column('label', "labels")
+
+            dataset = dataset.shuffle()
+            dataset = dataset.rename_column('label', "labels")
+
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1115,7 +1055,7 @@ class FinancialPhrasebank(Miam):
 
 class TargetHateCheck(Miam):
     task_metadata = {
-        "num_labels": 6,
+        "num_labels": 7,
         "label_col": "label",
         "tokenize_folder_name": "hatecheck-german",
     }
@@ -1160,23 +1100,29 @@ class TargetHateCheck(Miam):
         self.prepare_data_per_node = True
 
         # onetime processing of the dataset
-
+    
     def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
             print("Prepare Data for the first time")
-            print(f'Download clean')
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].filter(lambda example: example['target_ident'] != 'null')
-                dataset[split] = dataset[split].class_encode_column(
-                    'target_ident')  # since we want to classify based on topic, encode it
-                dataset[split] = dataset[split].rename_column('target_ident', "labels")
-                dataset[split] = dataset[split].rename_column('test_case', "sentence")
-                # remove other columns
-                dataset[split] = dataset[split].remove_columns(
+             # 90% train, 10% test + validation
+            train_testvalid = dataset['test'].train_test_split(test_size=0.1)
+            # Split the 10% test + valid in half test, half valid
+            test_valid = train_testvalid['train'].train_test_split(test_size=0.4)
+            dataset = DatasetDict({
+                'train': test_valid['train'],
+                'test': train_testvalid['test'],
+                'validation': test_valid['test']})
+
+            dataset = dataset.shuffle()
+            dataset = dataset.class_encode_column('target_ident')
+            dataset = dataset.filter(lambda example: example['target_ident'] is not None)
+            dataset = dataset.rename_column('target_ident', "labels")
+            dataset = dataset.rename_column('test_case', "sentence")
+
+            dataset = dataset.remove_columns(
                     ['mhc_case_id', 'functionality', 'label_gold', 'ref_case_id', 'ref_templ_id',
                      'templ_id', 'case_templ', 'gender_male', 'gender_female', 'label_annotated',
                      'label_annotated_maj', 'disagreement_in_case', 'disagreement_in_template'])
@@ -1186,6 +1132,9 @@ class TargetHateCheck(Miam):
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
+        
+        else:
+            print("File exist in Prepare Data. Load Tokenized data in setup.")
 
 
 class Mlsum(Miam):
@@ -1250,14 +1199,12 @@ class Mlsum(Miam):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].class_encode_column(
-                    'topic')  # since we want to classify based on topic, encode it
-                dataset[split] = dataset[split].rename_column('topic', "labels")
-                dataset[split] = dataset[split].map(self.clean_data, batched=True)
-                # remove other columns
-                dataset[split] = dataset[split].remove_columns(['title', 'summary', 'url', 'date'])
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.class_encode_column('topic')  # since we want to classify based on topic, encode it
+            dataset = dataset.rename_column('topic', "labels")
+            dataset = dataset.map(self.clean_data, batched=True)
+            dataset = dataset.remove_columns(['title', 'summary', 'url', 'date','text'])
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1320,6 +1267,7 @@ class ArgumentMining(Miam):
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
             # remove the columns that are not needed
             for split in dataset.keys():
+                dataset[split] = dataset[split].shuffle()
                 dataset[split] = dataset[split].class_encode_column(
                     'label')  # since we want to classify based on topic, encode it
                 dataset[split] = dataset[split].rename_column('label', "labels")
@@ -1383,18 +1331,24 @@ class Bundestag(Miam):
     def prepare_raw_data(self):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
             print("Prepare Data for the first time")
-            print(f'Download clean')
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
+
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset = dataset.filter(lambda example: example['party'] != '')
+            dataset = dataset.class_encode_column('party')
+            dataset = dataset.rename_column('party', "labels")
+            dataset = dataset.rename_column('text', "sentence")
             # remove the columns that are not needed
-            for split in dataset.keys():
-                # remove the rows that have no party
-                dataset[split] = dataset[split].filter(lambda example: example['party'] != '')
-                dataset[split] = dataset[split].class_encode_column(
-                    'party')  # since we want to classify based on topic, encode it
-                dataset[split] = dataset[split].rename_column('party', "labels")
-                dataset[split] = dataset[split].rename_column('text', "sentence")
+            # for split in dataset.keys():
+            #     # remove the rows that have no party
+            #     dataset[split] = dataset[split].filter(lambda example: example['party'] != '')
+            #     dataset[split] = dataset[split].class_encode_column(
+            #         'party')  # since we want to classify based on topic, encode it
+            #     dataset[split] = dataset[split].rename_column('party', "labels")
+            #     dataset[split] = dataset[split].rename_column('text', "sentence")
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1455,11 +1409,10 @@ class Tagesschau(Miam):
             raw_data_path = os.path.join(os.getcwd(), "raw_datasets")
             data_folder = self.task_name.split("/")[-1]
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
-            # remove the columns that are not needed
-            for split in dataset.keys():
-                dataset[split] = dataset[split].rename_column('label', "labels")
-                dataset[split] = dataset[split].rename_column('text', "sentence")
-                # remove other columns
+            # shuffle rename and remove for whole dataset
+            dataset = dataset.shuffle()
+            dataset=dataset.rename_column('label', "labels")
+            dataset=dataset.rename_column('text', "sentence")
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1500,7 +1453,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
                        train_batch_size=train_batch_size,
                        eval_batch_size=eval_batch_size, data_dir=data_dir)
 
-    elif task_name == "sentilex":
+    elif task_name == "senti_lex":
         return SentiLexData(model_name_or_path=model_name_or_path,
                             max_seq_length=max_seq_length,
                             train_batch_size=train_batch_size,
@@ -1572,10 +1525,36 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
-    data_dir = os.path.join(os.getcwd(), "testing_data")
-    dm = get_datamodule(task_name="german_argument_mining", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+    data_dir = os.path.join(os.getcwd(), "tokenized_datasets") # location of the tokenised data
+
+    dm = get_datamodule(task_name='hatecheck-german', model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                         max_seq_length=128,
                         train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
     dm.prepare_raw_data()
+    dm.prepare_data()
     dm.setup("fit")
-    print(next(iter(dm.val_dataloader())))
+    try:
+        print(next(iter(dm.val_dataloader())))
+    except TypeError as e:
+        print(e)
+        print("Error in dataloader")
+
+    new_dataset=['miam', 'swiss_judgment_prediction', 'x_stance', 'financial_phrasebank_75agree_german',
+                 'hatecheck-german', 'mlsum', 'german_argument_mining', 'Bundestag-v2', 'tagesschau',]
+    
+    old_dataset=['tyqiangz', 'omp', 'senti_lex', 'cardiff_multi_sentiment', 'mtop_domain', 'gnad10']
+    
+    for name in new_dataset+old_dataset:
+        dm = get_datamodule(task_name=name, model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+                            max_seq_length=128,
+                            train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
+        dm.prepare_raw_data()
+        dm.prepare_data()
+        dm.setup("fit")
+
+        try:
+            print(f"Task: {name}")
+            print(next(iter(dm.val_dataloader())))
+        except TypeError as e:
+            print(e)
+            print("Error in dataloader")
