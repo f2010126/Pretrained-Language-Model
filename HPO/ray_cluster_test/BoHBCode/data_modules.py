@@ -247,7 +247,7 @@ class TyqiangzData(DataModule):
     task_metadata = {
         "num_labels": 3,
         "label_col": "label",
-        "tokenize_folder_name": "tyqiangzdata",
+        "tokenize_folder_name": "multilingual-sentiments",
     }
 
     loader_columns = [
@@ -1341,14 +1341,6 @@ class Bundestag(Miam):
             dataset = dataset.class_encode_column('party')
             dataset = dataset.rename_column('party', "labels")
             dataset = dataset.rename_column('text', "sentence")
-            # remove the columns that are not needed
-            # for split in dataset.keys():
-            #     # remove the rows that have no party
-            #     dataset[split] = dataset[split].filter(lambda example: example['party'] != '')
-            #     dataset[split] = dataset[split].class_encode_column(
-            #         'party')  # since we want to classify based on topic, encode it
-            #     dataset[split] = dataset[split].rename_column('party', "labels")
-            #     dataset[split] = dataset[split].rename_column('text', "sentence")
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
