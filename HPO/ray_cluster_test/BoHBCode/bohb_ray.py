@@ -43,6 +43,11 @@ except ImportError:
     from .train_module import PLMTransformer
 
 
+def fake_ray_train_function(config):
+    print(f'current directory: {os.getcwd()}')
+    # generate a random number
+    loss = np.random.random()
+    ray.train.report({"loss": loss},)
 
 def transformer_train_function(config):
     print("budget aka epochs------> {}".format(config['epochs']))

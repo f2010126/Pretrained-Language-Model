@@ -1,8 +1,7 @@
 """Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for
 training."""
-from hmac import new
 from torch.utils.data import DataLoader
-from pytorch_lightning import LightningDataModule
+from lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
 import datasets
 from transformers import AutoTokenizer
@@ -1517,7 +1516,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
 
 if __name__ == "__main__":
     print(f'current working directory: {os.getcwd()}')
-    data_dir = os.path.join(os.getcwd(), "tokenized_datasets") # location of the tokenised data
+    data_dir = os.path.join(os.getcwd(), "tokenized_data") # location of the tokenised data
 
     dm = get_datamodule(task_name='hatecheck-german', model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                         max_seq_length=128,
@@ -1536,7 +1535,7 @@ if __name__ == "__main__":
     
     old_dataset=['tyqiangz', 'omp', 'senti_lex', 'cardiff_multi_sentiment', 'mtop_domain', 'gnad10']
     
-    for name in new_dataset+old_dataset:
+    for name in ['gnad10']:
         dm = get_datamodule(task_name=name, model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                             max_seq_length=128,
                             train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
@@ -1546,7 +1545,28 @@ if __name__ == "__main__":
 
         try:
             print(f"Task: {name}")
-            print(next(iter(dm.val_dataloader())))
+            print(next(iter(dm.train_dataloader())))
         except TypeError as e:
             print(e)
-            print("Error in dataloader")
+            print("Error in dataloader") 
+
+
+
+# Time per dataset old and new on 2 GPUs
+'''
+gnad10: 2.5 minutes
+miam: 5-6 minutes
+swiss_judgment_prediction: 1.5 minutes PROBLEM
+x_stance: 18 minutes 
+financial_phrasebank_75agree_german: 0.5 minutes
+hatecheck-german: 1.5 minutes
+mlsum: 1.9 hours
+german_argument_mining: 12 minutes
+Bundestag-v2: 45 minutes
+tagesschau: 1.2 minutes
+tyqiangz: 2 minutes
+omp: 5 minutes Not seen in the table
+senti_lex: 2 minutes
+cardiff_multi_sentiment: 1.4 minutes
+mtop_domain: 4.5 minutes
+'''

@@ -4,8 +4,7 @@ from typing import Optional
 import evaluate
 import torch
 import torchmetrics
-from pytorch_lightning import LightningModule
-# from lightning.pytorch import LightningModule
+from lightning import LightningModule
 from statistics import mean
 from torch.optim import Adam, AdamW
 from transformers import AutoConfig, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, \
