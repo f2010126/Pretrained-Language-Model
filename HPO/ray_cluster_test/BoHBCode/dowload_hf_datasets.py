@@ -45,7 +45,7 @@ def download_raw_datasets(dataset_list):
         print("Downloading dataset: ", dataset_name)
         try:
             # might need 'de', 'german', 'vm2', 
-            dataset = load_dataset(dataset_name, 'german')
+            dataset = load_dataset(dataset_name, 'de')
         except Exception as e:
             print("Error downloading dataset: ", dataset_name)
             print(e)
@@ -100,9 +100,9 @@ if __name__ == "__main__":
                     # 'gwlms/germeval2018',
                     # "amazon_reviews_multi",
                     ]
-    # download_raw_datasets(dataset_list=['tyqiangz/multilingual-sentiments'])
+    download_raw_datasets(dataset_list=['senti_lex'])
 
-    for dataset_name in dataset_list:
+    for dataset_name in ['gnad10']:
         print("Dataset: ", dataset_name)
         try:
             print_dataset_details(dataset_name)

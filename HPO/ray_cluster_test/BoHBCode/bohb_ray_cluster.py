@@ -70,16 +70,22 @@ class RayWorker(Worker):
                                run_config=run_config,
 
                                )
-        result = trainer.fit()
-        end_acc = result.metrics['ptl/val_accuracy']
-        # pick the required info
-        info_dict = {k: result.metrics[k] for k in
+        try:
+            result = trainer.fit()
+            end_acc = result.metrics['ptl/val_accuracy']
+            # pick the required info
+            info_dict = {k: result.metrics[k] for k in
                      result.metrics.keys() & {"train_acc", "train_loss", "train_f1", "val_acc", "val_acc_epoch",
                                               "val_loss", "val_loss_epoch", "val_f1", "val_f1_epoch", "ptl/val_loss",
                                               "ptl/val_accuracy", "ptl/val_f1"}}
-
-        # delete the checkpoint file .pt
-        remove_checkpoint_files(result.path)
+            # delete the checkpoint file .pt
+            remove_checkpoint_files(result.path)
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+            print('Trail failed--------------->')
+            end_acc =  -10000 # it failed. so worst possible accuracy
+            info_dict = {'error': 'Trail failed'}
 
         return ({
             'loss': -end_acc,  # remember: HpBandSter always minimizes! So we need to negate the accuracy

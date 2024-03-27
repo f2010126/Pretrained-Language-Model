@@ -1,5 +1,7 @@
 """Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for
 training."""
+from distutils.command import clean
+from multiprocessing.spawn import prepare
 from torch.utils.data import DataLoader
 from lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
@@ -14,6 +16,10 @@ from typing import List, Optional, Dict
 from filelock import FileLock
 import re
 import logging
+import shutil
+import json
+import os
+from datasets import load_dataset, ClassLabel, Features
 
 # Utils
 """
@@ -89,15 +95,21 @@ class DataModule(LightningDataModule):
         # Only called before processing
         raise NotImplementedError
 
-    def prepare_data(self):
+    def prepare_data(self, clean_data_path = "cleaned_datasets"):
         if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
             print("Tokenised File not exist")
             print(f'Tokenise the cleaned data')
-            clean_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
+            clean_data_path = os.path.join(os.getcwd(), clean_data_path)
             data_folder = self.task_name.split("/")[-1]
             try:
+                # load metadata
+                with open(os.path.join(clean_data_path,data_folder,'metadata.json'), "r") as file:
+                    metadata = json.load(file)
+                
+                self.task_metadata= metadata or None
                 dataset = datasets.load_from_disk(os.path.join(clean_data_path, data_folder))
                 for split in dataset.keys():
+                    # TODO: relabel the features?
                     dataset[split] = dataset[split].map(self.encode_batch, batched=True)
                     dataset[split] = dataset[split].remove_columns(['sentence'])
 
@@ -114,6 +126,10 @@ class DataModule(LightningDataModule):
                 with FileLock(f"Tokenised.lock"):
                     Path(f'{self.dir_path}').mkdir(parents=True, exist_ok=True)
                     torch.save(dataset, f'{self.dir_path}/{self.tokenised_file}')
+                    # copy the metadata to the tokenised folder
+                    shutil.copy(os.path.join(clean_data_path, data_folder, 'metadata.json'),
+                                os.path.join(self.dir_path, 'metadata.json'))
+                    
             except:
                 print("File already exist")
 
@@ -124,6 +140,8 @@ class DataModule(LightningDataModule):
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
         except:
             logging.debug("The tokenised data file not exist")
+            #self.prepare_data()
+            self.prepare_raw_data()
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
 
@@ -477,6 +495,7 @@ class SentiLexData(DataModule):
 
 
             # Save this dataset to disk
+            ###### TODO: get metadata and store that as welk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
             if not os.path.exists(cleaned_data_path):
                 os.makedirs(cleaned_data_path)
@@ -1200,6 +1219,10 @@ class Mlsum(Miam):
             dataset = datasets.load_from_disk(os.path.join(raw_data_path, data_folder))
             # shuffle rename and remove for whole dataset
             dataset = dataset.shuffle()
+            # train has 21, test has 12, validation has 13 labels. 
+            # from train take only the 12 labels that are in test
+            dataset = dataset.filter(lambda example: example['topic'] in dataset['test']['topic'])
+
             dataset = dataset.class_encode_column('topic')  # since we want to classify based on topic, encode it
             dataset = dataset.rename_column('topic', "labels")
             dataset = dataset.map(self.clean_data, batched=True)
@@ -1411,6 +1434,59 @@ class Tagesschau(Miam):
                 os.makedirs(cleaned_data_path)
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
+
+class AugmentedDataset(DataModule):
+    task_metadata = {
+        "num_labels": 2,
+        "label_col": "label",}
+    
+    loader_columns = [
+        "datasets_idx",
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "start_positions",
+        "end_positions",
+        "labels",
+    ]
+    def __init__(
+            self,
+            config=Optional[Dict],
+            model_name_or_path: str = "bert-base-uncased",
+            task_name: str = 'AugmentedDataset', ## loaded from cleaned_datasets metadata
+            tokenize_folder_name: str = 'Augmented',    
+            max_seq_length: int = 128,
+            train_batch_size: int = 32,
+            eval_batch_size: int = 32,
+            data_dir='./data/tokenized_datasets/Augmented', # has to be the exact path to the tokenized data file. 
+
+            **kwargs,
+    ):
+        self.prepare_data_per_node = True
+        self.n_cpu = 0
+        self.task_metadata['task_name'] = task_name
+        self.task_metadata['tokenize_folder_name'] = tokenize_folder_name
+
+        self.task_name = self.task_metadata['task_name']
+        self.model_name_or_path = model_name_or_path
+        self.max_seq_length = max_seq_length
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
+        self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
+        self.dir_path = data_dir
+        self.prepare_data_per_node = True
+
+
+    def prepare_data(self):
+        # if not os.path.isfile(f'{self.dir_path}/{self.tokenised_file}'):
+        #     print("Prepare to Clean Data and Tokenize")
+        #     cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets", "Augmented", self.task_metadata['tokenize_folder_name'])
+        return super().prepare_data(clean_data_path="cleaned_datasets/Augmented")
+    
+    # prepare_raw_data is not needed for this class as it's already from cleaned_datasets
+
+
 """
 Get the datamodule for the task
 :param task_name: the name of the task
@@ -1508,6 +1584,12 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
     elif task_name == "tagesschau":
         return Tagesschau(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
                           train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, data_dir=data_dir)
+    elif task_name == "augmented":
+        # extract task name from the data_dir. tokenized_datasets/Augmented/Bundestag-v2_1X_4Labels
+        task = os.path.basename(data_dir)
+        return AugmentedDataset(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
+                                train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, 
+                                data_dir=data_dir, task_name=task, tokenize_folder_name=task)
 
     else:
         print("Task not found")
@@ -1535,11 +1617,12 @@ if __name__ == "__main__":
     
     old_dataset=['tyqiangz', 'omp', 'senti_lex', 'cardiff_multi_sentiment', 'mtop_domain', 'gnad10']
     
-    for name in ['gnad10']:
+    data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
+    for name in ['augmented']:
         dm = get_datamodule(task_name=name, model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                             max_seq_length=128,
                             train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
-        dm.prepare_raw_data()
+        # dm.prepare_raw_data()
         dm.prepare_data()
         dm.setup("fit")
 
@@ -1562,7 +1645,7 @@ financial_phrasebank_75agree_german: 0.5 minutes
 hatecheck-german: 1.5 minutes
 mlsum: 1.9 hours
 german_argument_mining: 12 minutes
-Bundestag-v2: 45 minutes
+Bundestag-v2: 45 minutes file not found?!
 tagesschau: 1.2 minutes
 tyqiangz: 2 minutes
 omp: 5 minutes Not seen in the table
