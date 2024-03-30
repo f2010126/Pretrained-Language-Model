@@ -4,12 +4,15 @@ import multiprocessing
 import os
 import sys
 import traceback
+import uuid
 # for load dict
 from typing import List
+
+import lightning.pytorch as pl
 import ray
 import torch
-from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from lightning.pytorch import seed_everything
+from lightning.pytorch.loggers import TensorBoardLogger
 from ray import tune
 from ray.train.lightning import (
     RayDDPStrategy,
@@ -19,12 +22,9 @@ from ray.train.lightning import (
 )
 from ray.train.torch import TorchTrainer
 from ray.tune import Callback
-from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
-from ray.tune.schedulers import ASHAScheduler
-from ray.tune.search.bohb import TuneBOHB
 from ray.tune.experiment import Trial
-import lightning.pytorch as pl
-import uuid
+from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
+from ray.tune.search.bohb import TuneBOHB
 
 # local changes
 logger = multiprocessing.log_to_stderr()
@@ -36,8 +36,6 @@ except ImportError:
     from BoHBCode.data_modules import get_datamodule
     from BoHBCode.train_module import PLMTransformer
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-import ConfigSpace as CS
-import ConfigSpace.hyperparameters as CSH
 
 hpo_config = {
     'model_name_or_path': tune.choice(["bert-base-uncased", "bert-base-multilingual-cased",
@@ -73,10 +71,12 @@ class MyCallback(Callback):
     ):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
 
+
 def trial_dir_name(Trial):
     # generate 5 digit uuid
     trial_Name = uuid.uuid4().hex[:5]
     return f"trial_{trial_Name}_" + str(Trial.trial_id)
+
 
 def objective_torch_trainer(config):
     seed_everything(143)
@@ -92,8 +92,8 @@ def objective_torch_trainer(config):
     log_dir = os.path.join(os.getcwd(), "ray_results_log/torch_trainer_logs")
     trainer = pl.Trainer(
         # max_epochs=config['num_epochs'],
-        logger=[# CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
-                TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
+        logger=[  # CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+            TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version=".")],
 
         # If fractional GPUs passed in, convert to int.
         num_nodes=1,
@@ -110,7 +110,7 @@ def objective_torch_trainer(config):
         log_every_n_steps=1,
         val_check_interval=0.5,
         # Fidelity
-        
+
     )
 
     # Validate your Lightning trainer configuration
@@ -123,6 +123,7 @@ def objective_torch_trainer(config):
         print("Other error", e)
         print(traceback.format_exc())
     print("Finished obj")
+
 
 # BOHB LOOP
 def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', task_name="sentilex"):
@@ -139,7 +140,7 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
             # no of other nodes?
             num_workers=2, use_gpu=use_gpu, resources_per_worker={"CPU": 1, }
         )
-    
+
     print(f"Scaling config -----> {scaling_config}")
 
     # train_fn_with_parameters = tune.with_parameters(objective_torch_trainer,
@@ -170,9 +171,9 @@ def torch_trainer_bohb(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
                    'random_fraction': 1 / 3, 'bandwidth_factor': 3, 'min_bandwidth': 1e-3, }
     # search Algo
     bohb_search = TuneBOHB(bohb_config=config_bohb,
-                           #metric="ptl/val_accuracy",
-                           #mode="max",
-                        # If you want to set the space manually
+                           # metric="ptl/val_accuracy",
+                           # mode="max",
+                           # If you want to set the space manually
                            )
     # Number of parallel runs allowed
     bohb_search = tune.search.ConcurrencyLimiter(bohb_search, max_concurrent=3)
@@ -284,5 +285,5 @@ if __name__ == "__main__":
         args.num_trials = 3
 
     torch_trainer_bohb(gpus_per_trial=args.num_gpu, num_trials=args.num_trials,
-                           exp_name=args.exp_name, task_name=args.task_name)
+                       exp_name=args.exp_name, task_name=args.task_name)
     print("END OF MAIN SCRIPT")

@@ -10,7 +10,7 @@ import torch
 from filelock import FileLock
 from transformers import AutoTokenizer
 
-from data_modules import DataModule, set_file_name
+from data_modules import DataModule, set_file_name, get_datamodule
 
 
 # repeat
@@ -692,7 +692,7 @@ class Tagesschau(Miam):
             dataset.save_to_disk(os.path.join(cleaned_data_path, self.task_metadata['tokenize_folder_name']))
 
 
-def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-uncased",
+def get_datamodule_extra(task_name="", model_name_or_path: str = "distilbert-base-uncased",
                    max_seq_length: int = 128, train_batch_size: int = 32,
                    eval_batch_size: int = 32, data_dir='./data'):
     # add documenation
@@ -758,6 +758,11 @@ def clean_datasets():
 
     # Tokenise the datasets
 
+models_list = ["bert-base-uncased", "bert-base-multilingual-cased",
+                   "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
+                   "dvm1983/TinyBERT_General_4L_312D_de", "linhd-postdata/alberti-bert-base-multilingual-cased",
+                   "dbmdz/distilbert-base-german-europeana-cased"]
+max_seq_length = [128, 256, 512]
 
 def tokenise_datasets():
     # add documenation
@@ -767,12 +772,7 @@ def tokenise_datasets():
     dataset_list = ['Bundestag-v2', 'tagesschau', 'german_argument_mining',
                     'mlsum', 'hatecheck-german', 'financial_phrasebank_75agree_german',
                     'x_stance', 'swiss_judgment_prediction', 'miam']
-
-    models_list = ["bert-base-uncased", "bert-base-multilingual-cased",
-                   "deepset/bert-base-german-cased-oldvocab", "uklfr/gottbert-base",
-                   "dvm1983/TinyBERT_General_4L_312D_de", "linhd-postdata/alberti-bert-base-multilingual-cased",
-                   "dbmdz/distilbert-base-german-europeana-cased"]
-    max_seq_length = [128, 256, 512]
+    
     # Tokenise the datasets
     for dataset_name in dataset_list:
         print("Tokenising dataset: ", dataset_name)
@@ -789,8 +789,41 @@ def tokenise_datasets():
                 print(f"Tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
                 dm = get_datamodule(task_name=dataset_name, model_name_or_path=model, max_seq_length=seq_length,
                                     data_dir=data_dir)
+                dm.prepare_raw_data()
                 dm.prepare_data()
                 print(f"Done tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
+
+
+
+def tokenise_model_seq(model_name, seq_length):
+    pass
+
+def tokenise_augmented_datasets(tokneised_dir):
+    data_dir = os.path.join(os.getcwd(), "cleaned_datasets", "Augmented")
+    # path of cleaned datasets/Augmented
+    for dataset_name in os.listdir(data_dir):
+        if not dataset_name.startswith('.'):
+            print("Tokenising dataset: ", dataset_name)
+            token_dataset_path = os.path.join(tokneised_dir, dataset_name)
+            print(f"Future path fpr dataset --->{token_dataset_path}")
+            dm = get_datamodule(task_name="augmented", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+                            max_seq_length=128,
+                            train_batch_size=32, eval_batch_size=32, data_dir=token_dataset_path)
+            dm.prepare_data()
+
+            for model in models_list:
+                for seq_length in max_seq_length:
+                # check if the file already exists
+                    tokenised_file = set_file_name(model, seq_length)
+                    if os.path.isfile(f'{token_dataset_path}/{tokenised_file}'):
+                        print(f"Tokenised dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length} already exists")
+                        continue
+                    print(f"Tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
+                    dm = get_datamodule(task_name="augmented", model_name_or_path=model, max_seq_length=seq_length,
+                                    data_dir=token_dataset_path)
+                    dm.prepare_data()
+                    print(f"Done tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
+
 
 
 if __name__ == "__main__":
@@ -802,4 +835,6 @@ if __name__ == "__main__":
     data_dir = os.path.join(os.getcwd(), "tokenized_data")
     os.makedirs(data_dir, exist_ok=True)
 
-    tokenise_datasets()
+    # tokenise_datasets()
+    data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented")
+    tokenise_augmented_datasets(data_dir)

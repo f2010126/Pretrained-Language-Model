@@ -9,10 +9,6 @@ import json
 import random
 from datasets import ClassLabel, Value
 
-
-
-
-
 # Function to augment dataset by removing specific labels
 def augment_dataset(original_df, labels_to_keep):
      # for a huggingface dataset, remove the given labels and relabel the dataset
@@ -77,6 +73,7 @@ def add_metadata(folder_path):
         # Check if the path is a directory
         if os.path.isdir(dataset_path):
             # Load the dataset
+            print(f"Adding metadata to --------> {dataset_name}")
             dataset = load_from_disk(dataset_path)
             metadata = calculate_metadata(dataset)
             metadata["tokenize_folder_name"] = dataset_name
@@ -116,7 +113,7 @@ def vary_labels(data_dir, name):
         # print labels 
         print(f'Augemented Labels--->{augmented_dataset["train"].features["labels"].names}')
         augmented_dataset.save_to_disk(os.path.join(data_dir,"Augmented" ,aug_dataset_name))
-                    # Write metadata to a JSON file
+        # Write metadata to a JSON file
         with open(os.path.join(data_dir,"Augmented" ,aug_dataset_name,'metadata.json'), 'w') as json_file:
                 json.dump(metadata, json_file, indent=4)
     
@@ -139,8 +136,9 @@ if __name__ == "__main__":
                     'x_stance', 'swiss_judgment_prediction', 'miam']
     data_folder = "Bundestag-v2"
     data_dir = os.path.join(os.getcwd(),"cleaned_datasets")
+    # add_metadata(data_dir)
     start_aug_datasets(data_dir)
-    # datastest()
+
     # mlsum 
    
 

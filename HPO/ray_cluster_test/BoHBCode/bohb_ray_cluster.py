@@ -84,8 +84,10 @@ class RayWorker(Worker):
             print(e)
             traceback.print_exc()
             print('Trail failed--------------->')
-            end_acc =  -10000 # it failed. so worst possible accuracy
-            info_dict = {'error': 'Trail failed'}
+            end_acc =  -10000
+            info_dict = {'error': f'Trail failed---> {e}',
+                         'traceback': traceback.format_exc()}
+            
 
         return ({
             'loss': -end_acc,  # remember: HpBandSter always minimizes! So we need to negate the accuracy
@@ -145,7 +147,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Example 1 - sequential and local execution.')
     parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=2)
-    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=2)
+    parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=1)
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str,
@@ -156,14 +158,17 @@ if __name__ == "__main__":
                         default='eth0')
     parser.add_argument('--shared_directory', type=str,
                         help='A directory that is accessible for all processes, e.g. a NFS share.', default='ddp_debug')
-    parser.add_argument('--task_name', type=str, help='Which task to run.', default='tagesschau')
+    parser.add_argument('--task_name', type=str, help='Which task to run.', default='mtop_domain')
     parser.add_argument('--eta', type=int, help='Eta value for BOHB', default=2)
     parser.add_argument('--num_gpu', type=int, help='Number of GPUs to use per worker', default=2)
     parser.add_argument('--previous_run', type=str, default=None,
                         help='Path to the directory of the previous run. Prev run is assumed to be in the same '
                              'working dir as current')
 
+
     args = parser.parse_args()
+
+    os.environ["TUNE_GLOBAL_CHECKPOINT_S"] = "5000000"
     # Every process has to lookup the hostname
     host = hpns.nic_name_to_host(args.nic_name)
 

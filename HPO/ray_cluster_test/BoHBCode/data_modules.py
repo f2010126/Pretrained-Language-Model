@@ -1,7 +1,6 @@
 """Contains the data modules for the different tasks. The data modules are used to load the data and prepare it for
 training."""
-from distutils.command import clean
-from multiprocessing.spawn import prepare
+
 from torch.utils.data import DataLoader
 from lightning import LightningDataModule
 # from lightning.pytorch import LightningDataModule
@@ -621,10 +620,10 @@ class MtopDomain(DataModule):
             
             # shuffle rename and remove for whole dataset
             dataset = dataset.shuffle()
-            dataset = dataset.class_encode_column('label')
-            dataset = dataset.rename_column('label', "labels")
+            dataset = dataset.class_encode_column("label_text")
+            dataset = dataset.rename_column('label_text', "labels")
             dataset = dataset.rename_column('text', "sentence")
-            dataset = dataset.remove_columns(["id", "label_text"])
+            dataset = dataset.remove_columns(["id", "label"])
 
             # Save this dataset to disk
             cleaned_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
@@ -1594,13 +1593,13 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
     else:
         print("Task not found")
         raise NotImplementedError
+    
 
-
-if __name__ == "__main__":
+def tokenise_datasets():
     print(f'current working directory: {os.getcwd()}')
     data_dir = os.path.join(os.getcwd(), "tokenized_data") # location of the tokenised data
 
-    dm = get_datamodule(task_name='hatecheck-german', model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+    dm = get_datamodule(task_name='tagesschau', model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                         max_seq_length=128,
                         train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
     dm.prepare_raw_data()
@@ -1617,9 +1616,15 @@ if __name__ == "__main__":
     
     old_dataset=['tyqiangz', 'omp', 'senti_lex', 'cardiff_multi_sentiment', 'mtop_domain', 'gnad10']
     
+
+if __name__ == "__main__":
+    tokenise_datasets()
+
+    # get recursive folder paths from under cleaned/Augmented/, call the datamodule with the task name augmented
+
     data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
     for name in ['augmented']:
-        dm = get_datamodule(task_name=name, model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+        dm = get_datamodule(task_name="augmented", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                             max_seq_length=128,
                             train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
         # dm.prepare_raw_data()
@@ -1651,5 +1656,6 @@ tyqiangz: 2 minutes
 omp: 5 minutes Not seen in the table
 senti_lex: 2 minutes
 cardiff_multi_sentiment: 1.4 minutes
-mtop_domain: 4.5 minutes
+mtop_domain: 4.5 minutes ENCODE THE label_text. 
+
 '''

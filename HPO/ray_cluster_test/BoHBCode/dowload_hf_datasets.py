@@ -14,21 +14,6 @@ from transformers import AutoTokenizer
 # Download a list of datasets from Hugging Face to a given location
 # parse with models and max_seq_length
 
-def print_dataset_details(dataset_name):
-    # add documenation
-    """
-    Print the details of a dataset
-    :param dataset_name: the name of the dataset to print
-    """
-    raw_data_path = os.path.join(os.getcwd(), "cleaned_datasets")
-    data_folder = dataset_name.split("/")[-1]
-    print(f"clean data {raw_data_path} Data folder:{os.path.join(raw_data_path, data_folder)} ")
-    dataset = load_from_disk(os.path.join(raw_data_path, data_folder))
-    wordlength = evaluate.load("word_length", module_type="measurement")
-    results = wordlength.compute(data=dataset['train']['sentence'])
-    print(results)
-    print(dataset)
-
 
 def download_raw_datasets(dataset_list):
     # add documenation
@@ -46,6 +31,7 @@ def download_raw_datasets(dataset_list):
         try:
             # might need 'de', 'german', 'vm2', 
             dataset = load_dataset(dataset_name, 'de')
+            print(dataset)
         except Exception as e:
             print("Error downloading dataset: ", dataset_name)
             print(e)
@@ -100,14 +86,6 @@ if __name__ == "__main__":
                     # 'gwlms/germeval2018',
                     # "amazon_reviews_multi",
                     ]
-    download_raw_datasets(dataset_list=['senti_lex'])
-
-    for dataset_name in ['gnad10']:
-        print("Dataset: ", dataset_name)
-        try:
-            print_dataset_details(dataset_name)
-        except Exception as e:
-            print("Error show dataset: ", dataset_name)
-            continue
+    download_raw_datasets(dataset_list=['tillschwoerer/tagesschau'])
 
     print("Done")

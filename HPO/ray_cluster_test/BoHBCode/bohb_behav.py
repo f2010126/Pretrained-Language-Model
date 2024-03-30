@@ -64,11 +64,12 @@ def try_predict_bobh_run(min_budget=1, max_budget=10, eta=3, n_iterations=70):
     result = predict_bohb_run(min_budget=min_budget, max_budget=max_budget, eta=eta, n_iterations=n_iterations)
     print(result)
 
-if __name__ == "__main__":
-    try_predict_bobh_run(min_budget=1, max_budget=2, eta=2, n_iterations=2)
 
-    # for i in range(1, 14):
-    #     print(f'Iteration {i}')
-    #     try_predict_bobh_run(min_budget=1, max_budget=12, eta=12, n_iterations=i)
+if __name__ == "__main__":
+    # try_predict_bobh_run(min_budget=1, max_budget=12, eta=12, n_iterations=2)
+
+    for i in range(1, 21):
+        print(f'Iteration {i}')
+        try_predict_bobh_run(min_budget=1, max_budget=6, eta=2, n_iterations=33)
 
     print('Done')

@@ -54,6 +54,7 @@ def transformer_train_function(config):
     seed_everything(config['seed'])
 
      # [4] Build your datasets on each worker
+    print(f'data dir-----> {config["data_dir"]}')
     dm = get_datamodule(task_name=config['task'], model_name_or_path=config['model_name_or_path'],
                             max_seq_length=config['max_seq_length'],
                             train_batch_size=config['per_device_train_batch_size'],

@@ -6,9 +6,11 @@ import time
 import traceback
 
 import torch
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger, WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch import Trainer, seed_everything
+
+from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger, WandbLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
+from tqdm import trange
 
 from BoHBCode.data_modules import get_datamodule
 from BoHBCode.train_module import PLMTransformer
@@ -23,10 +25,10 @@ def train_single_config(config, task_name='gnad10', budget=1):
     log_dir = os.path.join(data_dir, 'Logs')
     model_dir = os.path.join(data_dir, 'Models')
 
-
     print("budget aka epochs------> {}".format(budget))
     if torch.cuda.is_available():
-        logging.debug("CUDA available, using GPU no. of device: {}".format(torch.cuda.device_count()))
+        logging.debug("CUDA available, using GPU no. of device: {}".format(
+            torch.cuda.device_count()))
     else:
         logging.debug("CUDA not available, using CPU")
 
@@ -38,24 +40,28 @@ def train_single_config(config, task_name='gnad10', budget=1):
                         train_batch_size=config['per_device_train_batch_size'],
                         eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
     dm.setup("fit")
-    model = PLMTransformer(config=config, num_labels=dm.task_metadata['num_labels'])
-    wandb_logger = WandbLogger(name=f"{task_name}_single_config", project="BoHB", log_model=False, offline=False)
-    checkpoint_callback = ModelCheckpoint(dirpath=model_dir, save_top_k=1, monitor="val_acc_epoch")
+    model = PLMTransformer(
+        config=config, num_labels=dm.task_metadata['num_labels'])
+    # wandb_logger = WandbLogger(name=f"{task_name}_single_config", project="BoHB", log_model=False, offline=False)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=model_dir, save_top_k=1, monitor="val_acc_epoch")
 
     trainer = Trainer(
         max_epochs=int(budget),
-        accelerator="cpu",
-        num_nodes=1,
-        devices="auto",
-        strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
+        accelerator='cpu', devices=1,
+
+       # devices="auto",
+        #strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
         logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
-                CSVLogger(save_dir=log_dir, name="csv_logs", version="."),wandb_logger],
-        #max_time="00:1:00:00",  # give each run a time limit
+                CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+                # wandb_logger
+                ],
+        # max_time="00:1:00:00",  # give each run a time limit
 
         log_every_n_steps=1,
-        limit_train_batches=1,
-        limit_val_batches=1,
-        val_check_interval=0.5,
+        limit_train_batches=0.1,
+        # limit_val_batches=0.2,
+         val_check_interval=5,
         callbacks=[checkpoint_callback],
 
         accumulate_grad_batches=config['gradient_accumulation_steps'],
@@ -64,8 +70,10 @@ def train_single_config(config, task_name='gnad10', budget=1):
     try:
         start = time.time()
         trainer.fit(model, datamodule=dm)
+        print(f"Training completed for {task_name} epochs {trainer.default_root_dir}")
     except Exception as e:
-        print(f"Exception in training: with config {config} and budget {budget}")
+        print(
+            f"Exception in training: with config {config} and budget {budget}")
         print(e)
         traceback.print_exc()
 
@@ -74,19 +82,22 @@ def train_single_config(config, task_name='gnad10', budget=1):
     print(f"Return values available: {trainer.callback_metrics}")
 
     try:
-        result = trainer.test(ckpt_path="best", datamodule=dm)
-        print(result)
+        print("Not Testing model")
+        # result = trainer.test(ckpt_path="best", datamodule=dm)
+        # print(result)
     except Exception as e:
-        print(f"Exception in testing: with config {config} and budget {budget}")
+        print(
+            f"Exception in testing: with config {config} and budget {budget}")
         print(e)
         traceback.print_exc()
 
-    return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget,}
+    return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget, }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate a Single Config')
-    parser.add_argument('--model-name', type=str, default="bert-base-german-cased", help='Task name')
+    parser.add_argument('--model-name', type=str,
+                        default="bert-base-german-cased", help='Task name')
     parser.add_argument('--budget', type=int, default=1, help='Budget')
 
     args = parser.parse_args()
@@ -99,6 +110,21 @@ if __name__ == "__main__":
                      'optimizer_name': 'SGD', 'per_device_eval_batch_size': 8,
                      'per_device_train_batch_size': 4, 'scheduler_name': 'cosine_with_warmup',
                      'warmup_steps': 500, 'weight_decay': 8.372735952480551e-05, 'sgd_momentum': 0.12143549900084782}
+    
+    sample_config = {"adam_epsilon": 1.2372243448105274e-07,
+                     "gradient_accumulation_steps": 16,
+                     "learning_rate": 3.277577722487855e-05,
+                     "max_seq_length": 128,
+                     "model_name_or_path": "dbmdz/distilbert-base-german-europeana-cased",
+                     "optimizer_name": "Adam",
+                     "per_device_train_batch_size": 4,
+                     "scheduler_name": "cosine_with_warmup",
+                     "warmup_steps": 10,
+                     "weight_decay": 0.00011557671486497145,
+                     
+                     'gradient_clip_algorithm': 'norm', 'max_grad_norm': 1.9125507303302376, 
+                     'per_device_eval_batch_size': 8,
+                     }
 
     # weght decay no major effect needs to be smaller order e-08
 
@@ -108,12 +134,17 @@ if __name__ == "__main__":
     #     output.append(train_single_config(config=sample_config, task_name=task,budget=10))
     # print(output)
     output = []
-    output.append(train_single_config(config=sample_config, task_name='gnad10', budget=5))
+    output.append(train_single_config(
+        config=sample_config, task_name='cardiff_multi_sentiment', budget=5))
     print(output)
 
     # write to file
     lock = threading.Lock()
-    output_file = os.path.join(os.getcwd(), 'SingleConfig', f'{args.model_name}_Amaz_dataset_time.txt')
+    os.makedirs(os.path.join(os.getcwd(), 'SingleConfig',), exist_ok=True)
+    output_file = os.path.join(
+        os.getcwd(), 'SingleConfig', f'{args.model_name}_meta_dataset_time.txt')
+    # create output file
+
     # open file for appendin
     with lock:
         with open(output_file, 'w') as file:

@@ -1,3 +1,8 @@
+# Add documentation
+"""
+Hyperparameter Optimization using Ray Tune and Pytorch Lightning.
+ASHA Scheduler plus Random Search.
+"""
 import argparse
 import logging
 import multiprocessing
@@ -74,7 +79,11 @@ class MyCallback(Callback):
     ):
         print(f"Got error for {trial.trainable_name} with config {trial.config}")
 
+"""
+Trainings function for the Pytorch Lightning Trainer.
+:param config: the hyperparameters for the training
 
+"""
 def objective_torch_trainer(config):
     data_dir = config['data_dir']
     logging.debug(f"dir {data_dir} and cwd {os.getcwd()}")
@@ -202,7 +211,9 @@ def torch_trainer_asha(gpus_per_trial=0, num_trials=10, exp_name='bohb_sample', 
         print(traceback.format_exc())
     print("END")
 
-
+"""
+Parse the arguments for the main function
+"""
 def parse_args():
     parser = argparse.ArgumentParser(description="Bohb on Slurm")
     parser.add_argument(
