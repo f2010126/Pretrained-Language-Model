@@ -78,7 +78,8 @@ class DataModule(LightningDataModule):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -821,7 +822,8 @@ class Miam(DataModule):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -893,7 +895,8 @@ class SwissJudgement(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -966,7 +969,8 @@ class XStance(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1045,7 +1049,8 @@ class FinancialPhrasebank(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1112,7 +1117,8 @@ class TargetHateCheck(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1196,7 +1202,8 @@ class Mlsum(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1275,7 +1282,8 @@ class ArgumentMining(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir 
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1345,7 +1353,8 @@ class Bundestag(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 
@@ -1411,7 +1420,8 @@ class Tagesschau(Miam):
         self.label_column = label_column
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
-        self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        # self.dir_path = os.path.join(data_dir, self.task_metadata['tokenize_folder_name'])
+        self.dir_path = data_dir
         self.tokenised_file = set_file_name(self.model_name_or_path, self.max_seq_length)
         self.prepare_data_per_node = True
 

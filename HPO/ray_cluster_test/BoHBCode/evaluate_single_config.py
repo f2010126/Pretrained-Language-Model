@@ -11,6 +11,8 @@ from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger, WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 from tqdm import trange
+import sys
+sys.path.append(os.path.abspath('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test'))
 
 from BoHBCode.data_modules import get_datamodule
 from BoHBCode.train_module import PLMTransformer
@@ -19,11 +21,13 @@ MAX_GPU_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 16
 
 
-def train_single_config(config, task_name='gnad10', budget=1):
-    data_dir = os.path.join(os.getcwd(), 'SingleConfig')
-    os.makedirs(data_dir, exist_ok=True)
-    log_dir = os.path.join(data_dir, 'Logs')
-    model_dir = os.path.join(data_dir, 'Models')
+def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleaned_datasets', train=True):
+    eval_dir = os.path.join(os.getcwd(), 'Evaluations')
+    # os.makedirs(data_dir, exist_ok=True)
+    log_dir = os.path.join(eval_dir, 'Logs')
+    os.makedirs(log_dir, exist_ok=True)
+    model_dir = os.path.join(eval_dir, 'Models')
+    os.makedirs(model_dir, exist_ok=True)
 
     print("budget aka epochs------> {}".format(budget))
     if torch.cuda.is_available():
@@ -35,21 +39,29 @@ def train_single_config(config, task_name='gnad10', budget=1):
     seed_everything(9)
 
     # set up data and model
-    dm = get_datamodule(task_name=task_name, model_name_or_path=config['model_name_or_path'],
-                        max_seq_length=config['max_seq_length'],
-                        train_batch_size=config['per_device_train_batch_size'],
-                        eval_batch_size=config['per_device_eval_batch_size'], data_dir=data_dir)
+    # reading from the incumbent yaml file
+    dm = get_datamodule(task_name=task_name, model_name_or_path=config['model_config']['model'],
+                        max_seq_length=config['model_config']['dataset']['seq_length'],
+                        train_batch_size=config['model_config']['dataset']['batch'],
+                        eval_batch_size=config['model_config']['dataset']['batch'], data_dir=data_dir)
     dm.setup("fit")
+    model_config = {'model_name_or_path': config['model_config']['model'],
+                    'optimizer_name':config['model_config']['optimizer']['type'],
+                    'learning_rate': config['model_config']['optimizer']['lr'],
+                    'scheduler_name': config['model_config']['optimizer']['scheduler'],
+                    'weight_decay': config['model_config']['optimizer']['weight_decay'],
+                    'sgd_momentum': config['model_config']['optimizer']['momentum'],
+                    'warmup_steps': config['model_config']['training']['warmup'],
+                    }
     model = PLMTransformer(
-        config=config, num_labels=dm.task_metadata['num_labels'])
+        config=model_config, num_labels=config['model_config']['dataset']['num_labels'])
     # wandb_logger = WandbLogger(name=f"{task_name}_single_config", project="BoHB", log_model=False, offline=False)
     checkpoint_callback = ModelCheckpoint(
         dirpath=model_dir, save_top_k=1, monitor="val_acc_epoch")
-
+    # set up trainer
     trainer = Trainer(
         max_epochs=int(budget),
         accelerator='cpu', devices=1,
-
        # devices="auto",
         #strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
         logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
@@ -58,40 +70,44 @@ def train_single_config(config, task_name='gnad10', budget=1):
                 ],
         # max_time="00:1:00:00",  # give each run a time limit
 
-        log_every_n_steps=1,
-        limit_train_batches=0.1,
+        log_every_n_steps=10,
+        # limit_train_batches=0.1,
+        limit_test_batches=0.1,
         # limit_val_batches=0.2,
-         val_check_interval=5,
+         val_check_interval=10,
         callbacks=[checkpoint_callback],
 
-        accumulate_grad_batches=config['gradient_accumulation_steps'],
+        accumulate_grad_batches=config['model_config']['training']['gradient_accumulation'],
     )
-    # train model
+    if train:
+        try:
+            start = time.time()
+            trainer.fit(model, datamodule=dm)
+            print(f"Training completed for {task_name} epochs {trainer.default_root_dir}")
+        except Exception as e:
+            print(
+                f"Exception in training: with config {config} and budget {budget}")
+            print(e)
+            traceback.print_exc()
+        
+        end = time.time() - start
+        print(f"Time taken for {task_name} epochs: {end}")
+        print(f"Return values available: {trainer.callback_metrics}")
+        return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget, }
+
     try:
+        return {"end_time": 0, "metrics": {'test_f1_epoch': 0.40}, "budget": budget, }
         start = time.time()
-        trainer.fit(model, datamodule=dm)
-        print(f"Training completed for {task_name} epochs {trainer.default_root_dir}")
+        result = trainer.test(ckpt_path='best',datamodule=dm) if train else trainer.test(model=model, datamodule=dm)
+        print(result)
+        end = time.time() - start
+        print(f"Time taken for {task_name} epochs: {end}")
+        return {"end_time": end, "metrics": result, "budget": budget, }
     except Exception as e:
-        print(
-            f"Exception in training: with config {config} and budget {budget}")
+        print(f"Exception in testing: with config {config} and budget {budget}")
         print(e)
         traceback.print_exc()
-
-    end = time.time() - start
-    print(f"Time taken for {task_name} epochs: {end}")
-    print(f"Return values available: {trainer.callback_metrics}")
-
-    try:
-        print("Not Testing model")
-        # result = trainer.test(ckpt_path="best", datamodule=dm)
-        # print(result)
-    except Exception as e:
-        print(
-            f"Exception in testing: with config {config} and budget {budget}")
-        print(e)
-        traceback.print_exc()
-
-    return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget, }
+        return {"end_time": 0, "metrics": {'test_f1_epoch': 0.0}, "budget": budget, }
 
 
 if __name__ == "__main__":

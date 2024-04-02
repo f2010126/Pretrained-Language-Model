@@ -8,6 +8,9 @@ import yaml
 
 from copy import deepcopy
 import json
+import sys
+sys.path.append(os.path.abspath('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test'))
+
 
 """
 Read the result.pkl for the runs and convert the best config to a yaml file
@@ -48,31 +51,34 @@ def create_yaml(working_dir, dataset='gnad10', result_dir='IncumbentConfigs', me
     inc_config = id2conf[inc_id]['config']
 
     # Read the default config
-    default_config_path=os.path.join('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/BoHBCode/MetaDataCreation','default.yaml')
+    default_config_path=os.path.join('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation','default.yaml')
     with open(default_config_path) as in_stream:
         default_config = yaml.safe_load(in_stream)
     
     format_incumbent = incumbent_to_yaml(inc_config, default_config)
     # add the metadata
-    format_incumbent['incumbent_for'] = metadata['name'] # its from the datasetruns so HPO
-    format_incumbent['model_config']['dataset']['name']=metadata['name'] # That it trained on. NOT THE SAME AS THE INCUMBENT where it is best.
+    format_incumbent['incumbent_for'] = metadata['task_name'] # its from the datasetruns so HPO
+    format_incumbent['model_config']['dataset']['name']=metadata['task_name'] # That it trained on. NOT THE SAME AS THE INCUMBENT where it is best.
     format_incumbent['model_config']['dataset']['num_labels'] = metadata['num_labels']
     format_incumbent['model_config']['dataset']['average_text_length'] = metadata['average_text_length']
     format_incumbent['model_config']['dataset']['num_training_samples'] = metadata['num_training_samples']
     format_incumbent['run_info']=json.dumps(run_info)
     # model and dataset are the last part of the name
-    model_name = format_incumbent['model_config']['model'].split('/')[-1]
     dataset_name = format_incumbent['model_config']['dataset']['name'].split('/')[-1]
 
     # create the output folder
-    if not os.path.exists(os.path.join(os.getcwd(),result_dir,dataset)):
-        os.makedirs(os.path.join(os.getcwd(),result_dir,dataset))
-    output_path = os.path.join(os.getcwd(),result_dir,dataset, f"{model_name}_{dataset_name}_incumbent.yaml")
+    if not os.path.exists(os.path.join(os.getcwd(),result_dir)):
+        os.makedirs(os.path.join(os.getcwd(),result_dir), exist_ok=True)    
+    output_path = os.path.join(os.getcwd(),result_dir, f"{dataset_name}_incumbent.yaml")
     with open(output_path, "w+") as out_stream:
         yaml.dump(format_incumbent, out_stream)
 
 
 def read_pkls(working_dir, result_dir):
+    """ 
+    :param working_dir: the directory with the bohb run results as sub folders
+    :param result_dir: the directory to save the yaml files
+    """
     dataset_strings=['miam', 'swiss_judgment_prediction', 'x_stance', 'financial_phrasebank_75agree_german',
                  'hatecheck-german', 
                  #'mlsum', 
@@ -80,17 +86,17 @@ def read_pkls(working_dir, result_dir):
                  # 'tyqiangz', 
                  'omp', 'senti_lex', "multilingual-sentiments", 'mtop_domain', 'gnad10',"tweet_sentiment_multilingual"]
     for folder_name, _, files in os.walk(working_dir):
+        cleaned_dataset_loc='/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model'
         for file_name in files:
             if file_name.endswith('.pkl') and any(string in file_name for string in dataset_strings):
                 # pkl is here, get the dataset name
                 dataset_name = [string for string in dataset_strings if string in file_name]
                 # load the metadata
-                metadata_loc = os.path.join(os.getcwd(),args.metadata_loc, dataset_name[0], 'metadata.json')
+                metadata_loc = os.path.join(cleaned_dataset_loc,args.metadata_loc, dataset_name[0], 'metadata.json')
                 file_path = os.path.join(folder_name, file_name)
                 try:
                     with open(metadata_loc) as in_stream:
                         metadata = yaml.safe_load(in_stream)
-                        print(f"Data loaded from {file_path}: {metadata}")
                         create_yaml(working_dir=folder_name, dataset=dataset_name[0], result_dir=result_dir, metadata=metadata)  
                 except FileNotFoundError:
                     print(f"Metadata file not found at {metadata_loc}")
@@ -111,18 +117,12 @@ if __name__ == "__main__":
                         help='Directory with run results pkl file',default='IncumbentConfigs')
     # store the result under IncumbentConfigs/dataset/file.yaml 
     args = parser.parse_args()
-    # where all the run artifacts are kept
-    # metadata_loc = os.path.join(os.getcwd(),args.metadata_loc, args.dataset, 'metadata.json')
-    # try:
-    #     with open(metadata_loc) as in_stream:
-    #         metadata = yaml.safe_load(in_stream)    
-    # except FileNotFoundError:
-    #     print(f"Metadata file not found at {metadata_loc}")
-    #     exit(1)
+
     working_dir = os.path.join(os.getcwd(),'../datasetruns')
     working_dir = os.path.join('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/BoHBCode/datasetruns')
+    save_location = os.path.join(os.getcwd(),'HPO/ray_cluster_test',args.save_location)
     # create_yaml(working_dir=working_dir, dataset=args.dataset, result_dir=args.save_location, metadata=metadata)
-    read_pkls(working_dir=working_dir,result_dir=args.save_location)
+    read_pkls(working_dir=working_dir,result_dir=save_location)
 
 
 
