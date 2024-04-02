@@ -96,7 +96,7 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
         return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget, }
 
     try:
-        return {"end_time": 0, "metrics": {'test_f1_epoch': 0.40}, "budget": budget, }
+        # return {"end_time": 0, "metrics": {'test_f1_epoch': 0.40}, "budget": budget, }
         start = time.time()
         result = trainer.test(ckpt_path='best',datamodule=dm) if train else trainer.test(model=model, datamodule=dm)
         print(result)
