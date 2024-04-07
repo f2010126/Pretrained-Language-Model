@@ -138,12 +138,21 @@ class DataModule(LightningDataModule):
         # load data here
         try:
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
+            # load meta data from metadata.json at self.dir_path 
+            with open(os.path.join(self.dir_path, 'metadata.json'), "r") as file:
+                metadata = json.load(file)
+            # set value as metadata or old value
+            self.task_metadata = metadata or self.task_metadata
         except:
             logging.debug("The tokenised data file not exist")
             #self.prepare_data()
             self.prepare_raw_data()
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
+            with open(os.path.join(self.dir_path, 'metadata.json'), "r") as file:
+                metadata = json.load(file)
+            # set value as metadata or old value
+            self.task_metadata = metadata or self.task_metadata
 
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
         logging.debug('dataset loaded')
@@ -1603,7 +1612,6 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
     else:
         print("Task not found")
         raise NotImplementedError
-    
 
 def tokenise_datasets():
     print(f'current working directory: {os.getcwd()}')
@@ -1628,12 +1636,11 @@ def tokenise_datasets():
     
 
 if __name__ == "__main__":
-    tokenise_datasets()
-
     # get recursive folder paths from under cleaned/Augmented/, call the datamodule with the task name augmented
 
-    data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
-    for name in ['augmented']:
+    # data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
+    data_dir = os.path.join(os.getcwd(), "tokenized_data", "senti_lex")
+    for name in ["senti_lex"]:
         dm = get_datamodule(task_name="augmented", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                             max_seq_length=128,
                             train_batch_size=32, eval_batch_size=32, data_dir=data_dir)

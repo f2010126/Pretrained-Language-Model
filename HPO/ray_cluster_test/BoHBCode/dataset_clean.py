@@ -794,10 +794,30 @@ def tokenise_datasets():
                 print(f"Done tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
 
 
+def tokenise_given_dataset():
+    dataset_list = ['senti_lex'] 
+    # ['Bundestag-v2','miam','x_stance', 
+    #                 'gnad10','senti_lex','mtop_domain',
+    #                 'tagesschau']
+        # Tokenise the datasets
+    for dataset_name in dataset_list:
+        print("Tokenising dataset: ", dataset_name)
+        data_dir = os.path.join(os.getcwd(), "tokenized_data",dataset_name)
+        for model in models_list:
+            for seq_length in max_seq_length:
+                # check if the file already exists
+                tokenised_file = set_file_name(model, seq_length)
+                if os.path.isfile(f'{data_dir}/{tokenised_file}'):
+                    print(
+                        f"Tokenised dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length} already exists")
+                    continue
 
-def tokenise_model_seq(model_name, seq_length):
-    pass
-
+                print(f"Tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
+                dm = get_datamodule(task_name=dataset_name, model_name_or_path=model, max_seq_length=seq_length,
+                                    data_dir=data_dir)
+                dm.prepare_raw_data()
+                dm.prepare_data()
+                print(f"Done tokenising dataset: {dataset_name} Model: {model} Max_seq_length: {seq_length}")
 def tokenise_augmented_datasets(tokneised_dir):
     data_dir = os.path.join(os.getcwd(), "cleaned_datasets", "Augmented")
     # path of cleaned datasets/Augmented
@@ -836,5 +856,6 @@ if __name__ == "__main__":
     os.makedirs(data_dir, exist_ok=True)
 
     # tokenise_datasets()
+    tokenise_given_dataset()
     data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented")
-    tokenise_augmented_datasets(data_dir)
+    # tokenise_augmented_datasets(data_dir)
