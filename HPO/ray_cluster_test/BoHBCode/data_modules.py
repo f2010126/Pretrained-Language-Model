@@ -20,6 +20,7 @@ import json
 import os
 from datasets import load_dataset, ClassLabel, Features
 
+
 # Utils
 """
 Set the file name for the tokenised data
@@ -132,6 +133,10 @@ class DataModule(LightningDataModule):
                     
             except:
                 print("File already exist")
+        else:
+            print("File exist. Load Tokenized data")
+            self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
+
 
     def setup(self, stage: str):
         logging.debug(f'Setup data in directory: {self.dir_path}')

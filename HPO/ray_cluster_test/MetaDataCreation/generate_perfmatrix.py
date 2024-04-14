@@ -125,6 +125,9 @@ def show_heatmap(perf_matrix):
   plt.yticks(np.arange(len(perf_matrix.index)), perf_matrix.index)  
   plt.title('Heatmap Dataset V Pipeline')
   plt.show()
+  plt.savefig('heatmap.png')
+  # save the matrix to a csv file
+  perf_matrix.to_csv('performance_matrix.csv')
   print(perf_matrix)
 
 def show_diag(perf_matrix):

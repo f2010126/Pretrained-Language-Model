@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import traceback
+import yaml
 
 import torch
 from lightning.pytorch import Trainer, seed_everything
@@ -39,7 +40,6 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
     seed_everything(9)
 
     # set up data and model
-    # reading from the incumbent yaml file
     dm = get_datamodule(task_name=task_name, model_name_or_path=config['model_config']['model'],
                         max_seq_length=config['model_config']['dataset']['seq_length'],
                         train_batch_size=config['model_config']['dataset']['batch'],
@@ -54,7 +54,8 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
                     'warmup_steps': config['model_config']['training']['warmup'],
                     }
     model = PLMTransformer(
-        config=model_config, num_labels=config['model_config']['dataset']['num_labels'])
+        config=model_config, 
+        num_labels=dm.task_metadata['num_labels'],)
     # wandb_logger = WandbLogger(name=f"{task_name}_single_config", project="BoHB", log_model=False, offline=False)
     checkpoint_callback = ModelCheckpoint(
         dirpath=model_dir, save_top_k=1, monitor="val_acc_epoch")
@@ -64,14 +65,15 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
         accelerator='cpu', devices=1,
        # devices="auto",
         #strategy="ddp_spawn",  # change to ddp_spawn when in interactive mode
-        logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
-                CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
+        logger=False,
+        # logger=[TensorBoardLogger(save_dir=log_dir, name="tensorboard_logs", version="."),
+        #         CSVLogger(save_dir=log_dir, name="csv_logs", version="."),
                 # wandb_logger
-                ],
+                # ],
         # max_time="00:1:00:00",  # give each run a time limit
 
         log_every_n_steps=10,
-        # limit_train_batches=0.1,
+        limit_train_batches=0.1,
         limit_test_batches=0.1,
         # limit_val_batches=0.2,
          val_check_interval=10,
@@ -85,8 +87,7 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
             trainer.fit(model, datamodule=dm)
             print(f"Training completed for {task_name} epochs {trainer.default_root_dir}")
         except Exception as e:
-            print(
-                f"Exception in training: with config {config} and budget {budget}")
+            print(f"Exception in training: with config {config['incumbent_for']} and task {task_name} ")
             print(e)
             traceback.print_exc()
         
@@ -96,17 +97,18 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
         return {"end_time": end, "metrics": trainer.callback_metrics, "budget": budget, }
 
     try:
-        return {"end_time": 0, "metrics": {'test_f1_epoch': 0.40}, "budget": budget, }
+        # return {"end_time": 0, "metrics": {'test_f1_epoch': 0.40}, "budget": budget, }
         start = time.time()
         result = trainer.test(ckpt_path='best',datamodule=dm) if train else trainer.test(model=model, datamodule=dm)
+        # convert result to dictionary
         print(result)
         end = time.time() - start
         print(f"Time taken for {task_name} epochs: {end}")
-        return {"end_time": end, "metrics": result, "budget": budget, }
+        return {"end_time": end, "metrics": result[0], "budget": budget, }
     except Exception as e:
-        print(f"Exception in testing: with config {config} and budget {budget}")
-        print(e)
-        traceback.print_exc()
+        print(f"Exception in training: with config {config['incumbent_for']} and task {task_name} ")
+        # print(e)
+        # traceback.print_exc()
         return {"end_time": 0, "metrics": {'test_f1_epoch': 0.0}, "budget": budget, }
 
 
@@ -141,17 +143,21 @@ if __name__ == "__main__":
                      'gradient_clip_algorithm': 'norm', 'max_grad_norm': 1.9125507303302376, 
                      'per_device_eval_batch_size': 8,
                      }
-
-    # weght decay no major effect needs to be smaller order e-08
-
-    # output=[]
-    # for task in ['gnad10',"mtop_domain","cardiff_multi_sentiment","sentilex","omp","tyqiangz","amazon_reviews_multi"]:
-    #     print(f"Running task {task} time")
-    #     output.append(train_single_config(config=sample_config, task_name=task,budget=10))
-    # print(output)
     output = []
-    output.append(train_single_config(
-        config=sample_config, task_name='cardiff_multi_sentiment', budget=5))
+    for name in ['mtop_domain', 'tyqiangz', 'omp',"cardiff_multi_sentiment","swiss_judgment_prediction","hatecheck-german","german_argument_mining","tagesschau", 'gnad10']:
+        config_file=os.path.join(f'/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/IncumbentConfigs/{name}_incumbent.yaml')
+        try:
+            with open(config_file) as in_stream:
+                metadata = yaml.safe_load(in_stream)
+                sample_config = metadata
+        except Exception as e:
+            print(f"problem loading config file {config_file}")
+            print(e)
+            traceback.print_exc()
+
+        print(f"Training for {name}")
+        output.append(train_single_config(
+        config=sample_config, task_name=name, budget=1, train=False))
     print(output)
 
     # write to file
