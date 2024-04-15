@@ -5,7 +5,8 @@ for each incumbent configuration, it will run it against the test data of all th
 The dataset can be in the cleaned_datasets folder or the cleaned_datasets/augmented folder.
 
 """
-from logging import config
+import seaborn as sns
+
 import os
 import argparse
 import datasets
@@ -102,6 +103,8 @@ def make_evaluation_configs(pipelines, dataset_names, config_loc='IncumbentConfi
     # for each pipeline, run it against all the datasets. pipelines is the column, dataset is the row
     # for each dataset, run the pipeline and get the performance
     perf_matrix=pd.DataFrame(index=dataset_names, columns=pipelines)
+    # set datatype to float
+    perf_matrix=perf_matrix.astype(float)
     for index, row in perf_matrix.iterrows():
         for col_name, col_val in row.items():
         # Get the incumbent config using the col_name. 
@@ -115,20 +118,17 @@ def make_evaluation_configs(pipelines, dataset_names, config_loc='IncumbentConfi
     return perf_matrix
 
 
-def show_heatmap(perf_matrix):
-  array = perf_matrix.values
-  plt.imshow(array, cmap='hot', interpolation='nearest')
-  plt.colorbar()
-
+def show_heatmap(perf_matrix,filename='heatmap'):
+  
+ # Create a heatmap
+  sns.heatmap(perf_matrix, annot=True, cmap='viridis', cbar=True, fmt=".2f")
+  plt.title('Heatmap Dataset V Pipeline')
     # Add labels
   plt.xticks(np.arange(len(perf_matrix.columns)), perf_matrix.columns)
   plt.yticks(np.arange(len(perf_matrix.index)), perf_matrix.index)  
   plt.title('Heatmap Dataset V Pipeline')
-  plt.show()
-  plt.savefig('heatmap.png')
-  # save the matrix to a csv file
+  plt.savefig(f'{filename}.png')
   perf_matrix.to_csv('performance_matrix.csv')
-  print(perf_matrix)
 
 def show_diag(perf_matrix):
   for i, row_name in enumerate(dataset_names):
@@ -171,5 +171,5 @@ if __name__ == "__main__":
 
    # pipeline is the incumbent pipeline for that dataset. stored under IncumbentConfigs/dataset/file.yaml
     
-    show_heatmap(p_mat) 
+    show_heatmap(p_mat,filename='heatmap') 
    
