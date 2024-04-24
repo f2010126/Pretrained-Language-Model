@@ -30,7 +30,7 @@ def download_raw_datasets(dataset_list):
         print("Downloading dataset: ", dataset_name)
         try:
             # might need 'de', 'german', 'vm2', 
-            dataset = load_dataset(dataset_name, 'de')
+            dataset = load_dataset(dataset_name)
             print(dataset)
         except Exception as e:
             print("Error downloading dataset: ", dataset_name)
@@ -86,6 +86,6 @@ if __name__ == "__main__":
                     # 'gwlms/germeval2018',
                     # "amazon_reviews_multi",
                     ]
-    download_raw_datasets(dataset_list=['tillschwoerer/tagesschau'])
+    download_raw_datasets(dataset_list=['gwlms/germeval2018'])
 
     print("Done")

@@ -5,11 +5,10 @@ for each incumbent configuration, it will run it against the test data of all th
 The dataset can be in the cleaned_datasets folder or the cleaned_datasets/augmented folder.
 
 """
-import seaborn as sns
-
+from ast import main, pattern
+import re
 import os
 import argparse
-import datasets
 import pandas as pd
 import seaborn as sns   
 import matplotlib.pyplot as plt
@@ -22,53 +21,15 @@ sys.path.append(os.path.abspath('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS
 from BoHBCode.data_modules import get_datamodule
 from BoHBCode.evaluate_single_config import train_single_config
 
+from metadata_utils import datasets_main
+np.random.seed(42)
 
-pipelines=['Bundestag-v2_incumbent', 'Bundestag-v2_1X_2Labels_incumbent', 'Bundestag-v2_1X_3Labels_incumbent', 'Bundestag-v2_1X_4Labels_incumbent', 
-           'Bundestag-v2_1X_5Labels_incumbent', 'Bundestag-v2_1X_6Labels_incumbent', 'financial_phrasebank_75agree_german_incumbent', 
-           'financial_phrasebank_75agree_german_1X_2Labels_incumbent', 'german_argument_mining_incumbent', 'german_argument_mining_1X_2Labels_incumbent', 
-           'german_argument_mining_1X_3Labels_incumbent', 'gnad10_incumbent', 'gnad10_1X_2Labels_incumbent', 'gnad10_1X_3Labels_incumbent', 
-           'gnad10_1X_4Labels_incumbent', 'gnad10_1X_5Labels_incumbent', 'gnad10_1X_6Labels_incumbent', 'gnad10_1X_7Labels_incumbent', 
-           'gnad10_1X_8Labels_incumbent', 'hatecheck-german_incumbent', 'hatecheck-german_1X_2Labels_incumbent', 'hatecheck-german_1X_3Labels_incumbent', 
-           'hatecheck-german_1X_4Labels_incumbent', 'hatecheck-german_1X_5Labels_incumbent', 'hatecheck-german_1X_6Labels_incumbent', 'miam_incumbent', 
-           'miam_1X_10Labels_incumbent', 'miam_1X_11Labels_incumbent', 'miam_1X_12Labels_incumbent', 'miam_1X_13Labels_incumbent', 'miam_1X_14Labels_incumbent', 
-           'miam_1X_15Labels_incumbent', 'miam_1X_16Labels_incumbent', 'miam_1X_17Labels_incumbent', 'miam_1X_18Labels_incumbent', 'miam_1X_19Labels_incumbent', 
-           'miam_1X_20Labels_incumbent', 'miam_1X_21Labels_incumbent', 'miam_1X_22Labels_incumbent', 'miam_1X_23Labels_incumbent', 'miam_1X_24Labels_incumbent', 
-           'miam_1X_25Labels_incumbent', 'miam_1X_26Labels_incumbent', 'miam_1X_27Labels_incumbent', 'miam_1X_28Labels_incumbent', 'miam_1X_29Labels_incumbent', 
-           'miam_1X_2Labels_incumbent', 'miam_1X_30Labels_incumbent', 'miam_1X_3Labels_incumbent', 'miam_1X_4Labels_incumbent', 'miam_1X_5Labels_incumbent', 
-           'miam_1X_6Labels_incumbent', 'miam_1X_7Labels_incumbent', 'miam_1X_8Labels_incumbent', 'miam_1X_9Labels_incumbent', 'mlsum_incumbent', 
-           'mlsum_1X_10Labels_incumbent', 'mlsum_1X_11Labels_incumbent', 'mlsum_1X_2Labels_incumbent', 'mlsum_1X_3Labels_incumbent', 'mlsum_1X_4Labels_incumbent', 
-           'mlsum_1X_5Labels_incumbent', 'mlsum_1X_6Labels_incumbent', 'mlsum_1X_7Labels_incumbent', 'mlsum_1X_8Labels_incumbent', 'mlsum_1X_9Labels_incumbent', 
-           'mtop_domain_incumbent', 'mtop_domain_1X_10Labels_incumbent', 'mtop_domain_1X_2Labels_incumbent', 'mtop_domain_1X_3Labels_incumbent', 
-           'mtop_domain_1X_4Labels_incumbent', 'mtop_domain_1X_5Labels_incumbent', 'mtop_domain_1X_6Labels_incumbent', 'mtop_domain_1X_7Labels_incumbent', 
-           'mtop_domain_1X_8Labels_incumbent', 'mtop_domain_1X_9Labels_incumbent', 'multilingual-sentiments_incumbent', 'multilingual-sentiments_1X_2Labels_incumbent', 
-           'senti_lex_incumbent', 'swiss_judgment_prediction_incumbent', 'tagesschau_incumbent', 'tagesschau_1X_2Labels_incumbent', 'tagesschau_1X_3Labels_incumbent', 
-           'tagesschau_1X_4Labels_incumbent', 'tagesschau_1X_5Labels_incumbent', 'tagesschau_1X_6Labels_incumbent', 'tweet_sentiment_multilingual_incumbent', 
-           'tweet_sentiment_multilingual_1X_2Labels_incumbent', 'x_stance_incumbent', 'x_stance_1X_2Labels_incumbent', 'x_stance_1X_3Labels_incumbent', 
-           'x_stance_1X_4Labels_incumbent', 'x_stance_1X_5Labels_incumbent', 'x_stance_1X_6Labels_incumbent', 'x_stance_1X_7Labels_incumbent', 'x_stance_1X_8Labels_incumbent', 
-           'x_stance_1X_9Labels_incumbent']
+def get_best_incumbent(perf_matrix):
+   performance_sum = perf_matrix.sum(axis=0)
+   average_performance = performance_sum / len(perf_matrix.index)
+   best_model = average_performance.idxmax()
+   print("The best model across all datasets is:", best_model)
 
-dataset_names=['multilingual-sentiments', 'miam', 'german_argument_mining', 'tagesschau', 'financial_phrasebank_75agree_german', 'tweet_sentiment_multilingual', 
-               'mlsum', 'hatecheck-german', 'gnad10', 'mtop_domain', 'x_stance', 'senti_lex', 'Bundestag-v2', 'swiss_judgment_prediction', 'gnad10_1X_2Labels', 
-               'miam_1X_24Labels', 'miam_1X_19Labels', 'tagesschau_1X_2Labels', 'mtop_domain_1X_8Labels', 'miam_1X_26Labels', 'tagesschau_1X_4Labels', 
-               'gnad10_1X_4Labels', 'miam_1X_22Labels', 'x_stance_1X_8Labels', 'miam_1X_9Labels', 'mtop_domain_1X_10Labels', 'german_argument_mining_1X_2Labels', 
-               'miam_1X_20Labels', 'gnad10_1X_6Labels', 'tagesschau_1X_6Labels', 'miam_1X_27Labels', 'tagesschau_1X_3Labels', 'miam_1X_18Labels', 'gnad10_1X_3Labels', 
-               'miam_1X_25Labels', 'mtop_domain_1X_9Labels', 'german_argument_mining_1X_3Labels', 'miam_1X_8Labels', 'financial_phrasebank_75agree_german_1X_2Labels', 
-               'x_stance_1X_9Labels', 'miam_1X_21Labels', 'gnad10_1X_7Labels', 'gnad10_1X_5Labels', 'miam_1X_23Labels', 'multilingual-sentiments_1X_2Labels', 
-               'tagesschau_1X_5Labels', 'miam_1X_6Labels', 'hatecheck-german_1X_6Labels', 'x_stance_1X_7Labels', 'mtop_domain_1X_3Labels', 'miam_1X_12Labels', 
-               'miam_1X_10Labels', 'x_stance_1X_5Labels', 'tweet_sentiment_multilingual_1X_2Labels', 'Bundestag-v2_1X_2Labels', 'hatecheck-german_1X_4Labels', 
-               'miam_1X_4Labels', 'mtop_domain_1X_5Labels', 'miam_1X_30Labels', 'Bundestag-v2_1X_6Labels', 'miam_1X_29Labels', 'miam_1X_14Labels', 'miam_1X_16Labels',
-               'miam_1X_2Labels', 'Bundestag-v2_1X_4Labels', 'hatecheck-german_1X_2Labels', 'mtop_domain_1X_7Labels', 'x_stance_1X_3Labels', 'miam_1X_11Labels', 
-               'Bundestag-v2_1X_3Labels', 'hatecheck-german_1X_5Labels', 'miam_1X_5Labels', 'x_stance_1X_4Labels', 'mtop_domain_1X_2Labels', 'x_stance_1X_6Labels',
-               'miam_1X_7Labels', 'gnad10_1X_8Labels', 'miam_1X_13Labels', 'miam_1X_17Labels', 'x_stance_1X_2Labels', 'mtop_domain_1X_6Labels', 'miam_1X_3Labels', 
-               'Bundestag-v2_1X_5Labels', 'hatecheck-german_1X_3Labels', '1mlsum', 'mtop_domain_1X_4Labels', 'miam_1X_15Labels', 'miam_1X_28Labels']
-
-
-core_datasets=['miam', 'swiss_judgment_prediction', 'x_stance', 'financial_phrasebank_75agree_german',
-                 'hatecheck-german', 
-                 #'mlsum', 
-                 'german_argument_mining', 'Bundestag-v2', 'tagesschau',
-                 # 'tyqiangz', 
-                 'omp', 'senti_lex', "multilingual-sentiments", 'mtop_domain', 'gnad10',"tweet_sentiment_multilingual"]
 def get_dataset_names(folder_path, exclude_folder):
     # Get list of all files in the folder
     files = os.listdir(folder_path)
@@ -117,18 +78,34 @@ def make_evaluation_configs(pipelines, dataset_names, config_loc='IncumbentConfi
     
     return perf_matrix
 
+def save_perf_matrix(perf_matrix, filename='performance_matrix'):
+   # saves correctly
+   perf_matrix.to_csv(f'{filename}_performance_matrix.csv', index_label=False)
+   return f'{filename}_performance_matrix.csv'
+
+import re
+def get_tick_names(perf_matrix):
+   dataset_names = perf_matrix.index
+   pattern = re.compile(r'_\d+X_\d+Labels$')
+   main_dataset_names = [name for name in dataset_names if not pattern.search(name)]
+   main_dataset_names_with_placeholder = [name if name in main_dataset_names else ' ' for name in perf_matrix.index]
+   main_dataset_incumbents = [name + '_incumbent' for name in main_dataset_names]
+   main_dataset_incumbents_with_placeholder = [incumbent if incumbent in main_dataset_incumbents else ' ' for incumbent in perf_matrix.columns]
+   return main_dataset_names_with_placeholder,main_dataset_incumbents_with_placeholder
 
 def show_heatmap(perf_matrix,filename='heatmap'):
-  
  # Create a heatmap
-  sns.heatmap(perf_matrix, annot=True, cmap='viridis', cbar=True, fmt=".2f")
-  plt.title('Heatmap Dataset V Pipeline')
-    # Add labels
-  plt.xticks(np.arange(len(perf_matrix.columns)), perf_matrix.columns)
-  plt.yticks(np.arange(len(perf_matrix.index)), perf_matrix.index)  
-  plt.title('Heatmap Dataset V Pipeline')
+  plt.figure(figsize=(8, 6))
+  main_dataset_names, main_dataset_x = get_tick_names(perf_matrix)
+  sns.heatmap(perf_matrix, cmap='magma', cbar=True, fmt=".6f",yticklabels=main_dataset_names, xticklabels=main_dataset_x)
+  plt.xlabel('Dataset Incumbents')
+  plt.ylabel('Datasets')
+  plt.title('Performance Matrix, F1 Metric',fontsize=16, fontweight='bold')
+  main_dataset_names, main_dataset_indices = get_tick_names(perf_matrix)
+  # plt.yticks(main_dataset_indices, main_dataset_names)
+
   plt.savefig(f'{filename}.png')
-  perf_matrix.to_csv('performance_matrix.csv')
+  plt.show()
 
 def show_diag(perf_matrix):
   for i, row_name in enumerate(dataset_names):

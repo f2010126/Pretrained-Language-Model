@@ -92,9 +92,13 @@ def relabel(file_path):
 
 def metadatafolders(folder_path):
     pattern = re.compile(r'(.+?)_(\d+)X_(\d+)Labels') #re.compile(r'.*?_1X_(\d+)Labels')
-    augment_datasets=['x_stance', 'tweet_sentiment_multilingual','mtop_domain'
+    augment_datasets=['x_stance', 'tweet_sentiment_multilingual',
+                      'mtop_domain','mlsum','senti_lex',
+                      'swiss_judgment_prediction','tyqiangz',
                       'miam','hatecheck-german','german_argument_mining',
-                      'financial_phrasebank_75agree_german']
+                      'financial_phrasebank_75agree_german',
+                      'Bundestag-v2','gnad10'
+                      'tagesschau']
     for root, dirs, files in os.walk(folder_path):
         for dir_name in dirs :
             match = pattern.match(dir_name)
@@ -141,10 +145,31 @@ def create_metafeatures_csv(folder_path):
     # Save DataFrame to CSV
     df.to_csv(os.path.join(folder_path, 'metafeatures.csv'))
 
+def read_metadata_files_to_dataframe(folder_path):
+    metadata_list = []
 
+    # Iterate through all files and directories in the folder
+    for root, dirs, files in os.walk(folder_path):
+        for file_name in files:
+            # Check if the file is named metadata.json
+            if file_name == 'metadata.json':
+                file_path = os.path.join(root, file_name)
+                # Read the contents of the JSON file
+                with open(file_path, 'r') as file:
+                    metadata = json.load(file)
+                    metadata_list.append(metadata)
+    
+    # Convert the list of dictionaries to a DataFrame
+    metadata_df = pd.DataFrame(metadata_list)
+    # drop columns named 'task' and 'task_name'
+    metadata_df.drop(columns=["tokenize_folder_name", "name","label_col"], inplace=True)
+    metadata_df.set_index('task_name', inplace=True)
+    metadata_df.to_csv('meta_features.csv', index_label=False)
+    return metadata_df
 
 # /Users/diptisengupta/Desktop
-if __name__ == "__main__":
+if __name__ == "__main__":    
+
     # get the datasets from datasets.txt as a list, remove the newline characters and all leading and trailing whitespaces
     with open("/Users/diptisengupta/Desktop/datasets.txt") as f:
         datasets = f.readlines()
@@ -152,4 +177,7 @@ if __name__ == "__main__":
     # print(f"{datasets}")
 
     # relabel("/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/1ncumbentConfigs")
-    metadatafolders('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/cleaned_datasets')
+    # metadatafolders('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/cleaned_datasets')
+
+    folder_path = '/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/cleaned_datasets'
+    metadata_df = read_metadata_files_to_dataframe(folder_path) 

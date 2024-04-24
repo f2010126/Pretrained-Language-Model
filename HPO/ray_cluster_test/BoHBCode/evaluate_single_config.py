@@ -74,7 +74,7 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
 
         log_every_n_steps=10,
         limit_train_batches=0.1,
-        limit_test_batches=0.1,
+        # limit_test_batches=0.1,
         # limit_val_batches=0.2,
          val_check_interval=10,
         callbacks=[checkpoint_callback],
