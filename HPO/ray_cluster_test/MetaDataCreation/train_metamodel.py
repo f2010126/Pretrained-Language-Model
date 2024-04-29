@@ -213,24 +213,6 @@ def test_model(model, criterion, test_loader):
         
     tqdm.write(f"Test Loss: {test_loss}, Test R-squared: {test_r_squared}, Number of Predictions within Threshold: {total_predictions_within_threshold}/{total_samples}")
 
-def run_training(input_size, hidden_size, output_size, epochs=10, lr=0.001):
-    model = MLP(input_size, hidden_size, output_size)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    customdata=CustomData( batch_size=32,seed=42)
-
-    num_epochs = epochs
-    num_folds = 5
-    custom_data = CustomData(batch_size=32, seed=42)
-    for fold in range(num_folds):
-        train_loader, val_loader, test_loader = custom_data.get_loaders(cv_fold=fold + 1)
-        model = training_loop(model, criterion, optimizer, train_loader, num_epochs)
-        # Validation
-        validate(model, criterion, val_loader)
-        # Test
-        test_model(model, criterion, test_loader)
-
-
 def cross_validate(input_size, hidden_size, output_size, epochs=10, lr=0.001,seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -309,5 +291,7 @@ if __name__ == "__main__":
     input_size = 27 # number of features encoded + dataset
     hidden_size = 64
     output_size = 1 # performance
-    model=cross_validate(input_size, hidden_size, output_size, epochs=100, lr=0.001,seed=42)
+    model=cross_validate(input_size, hidden_size, output_size, epochs=150, lr=0.001,seed=42)
+    # save the model
+    torch.save(model.state_dict(), 'metamodel.pkl')
     # train_xgboost()
