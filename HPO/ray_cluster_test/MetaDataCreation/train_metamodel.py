@@ -1,4 +1,5 @@
 
+from re import S
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -97,6 +98,13 @@ def calculate_r_squared(outputs, labels):
     r_squared = 1 - (residual_sum_of_squares / total_sum_of_squares)
     return r_squared.item()
 
+def compare_predictions(outputs, labels, threshold=0.3):
+    count_within_threshold = 0
+    for output, label in zip(outputs, labels):
+        if abs(output - label) <= threshold:
+            count_within_threshold += 1
+    return count_within_threshold
+
 class CustomData():
     def __init__(self, batch_size=32,seed=42):
         """
@@ -116,9 +124,6 @@ class CustomData():
         self.seed=seed
         np.random.seed(seed)
         torch.manual_seed(seed)
-        
-        # self.train_loader, self.val_loader, self.test_loader = self.create_data_loaders(self.select_cv_fold)
-        
 
     def create_data_loaders(self, cv_fold=1):
         # based on the cv_fold, create the training and validation data loaders.
@@ -157,17 +162,21 @@ class CustomData():
 
 # trains model for n epochs
 def training_loop(model, criterion, optimizer, train_loader, num_epochs=10):
+    total_loss = 0.0
+    num_batches = len(train_loader)
     for epoch in tqdm(range(num_epochs)):
         model.train()
-        running_loss = 0.0
+        epoch_loss = 0.0
         for inputs, labels in tqdm(train_loader):
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels.view(-1, 1))
             loss.backward()
             optimizer.step()
-            running_loss += loss.item()
-        print(f"Epoch {epoch+1}, Training Loss: {running_loss}")
+            epoch_loss += loss.item()
+        total_loss += epoch_loss
+    average_loss = total_loss / (num_epochs * num_batches)
+    tqdm.write(f"Total Training Loss: {total_loss:.4f}, Average Loss: {average_loss:.4f}")
     return model
 
 def validate(model, criterion, val_loader):
@@ -182,32 +191,33 @@ def validate(model, criterion, val_loader):
             val_r_squared += calculate_r_squared(outputs, labels)
         val_loss /= len(val_loader)
         val_r_squared /= len(val_loader)
-    print(f"Validation Loss: {val_loss}, Validation R-squared: {val_r_squared}")
-    return model
+    # tqdm.write(f"Validation Loss: {val_loss}, Validation R-squared: {val_r_squared}")
+    return val_loss, val_r_squared
 
 def test_model(model, criterion, test_loader):
     model.eval()
     test_loss = 0.0
     test_r_squared = 0.0
+    total_samples = 0
     with torch.no_grad():
         for inputs, labels in tqdm(test_loader):
             outputs = model(inputs)
             loss = criterion(outputs, labels.view(-1, 1))
-            # print number times the outputs are close to the labels
-
             test_r_squared += calculate_r_squared(outputs, labels)
             test_loss += loss.item()
+            total_samples += len(labels)
+
         test_loss /= len(test_loader)
         test_r_squared /= len(test_loader)
-    print(f"Test Loss---> {test_loss}, Test R-squared: {test_r_squared}")
-    return model
+        total_predictions_within_threshold = compare_predictions(outputs, labels, threshold=0.3)
+        
+    tqdm.write(f"Test Loss: {test_loss}, Test R-squared: {test_r_squared}, Number of Predictions within Threshold: {total_predictions_within_threshold}/{total_samples}")
 
 def run_training(input_size, hidden_size, output_size, epochs=10, lr=0.001):
     model = MLP(input_size, hidden_size, output_size)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     customdata=CustomData( batch_size=32,seed=42)
-    train_loader, val_loader, test_loader = customdata.get_loaders()
 
     num_epochs = epochs
     num_folds = 5
@@ -216,10 +226,44 @@ def run_training(input_size, hidden_size, output_size, epochs=10, lr=0.001):
         train_loader, val_loader, test_loader = custom_data.get_loaders(cv_fold=fold + 1)
         model = training_loop(model, criterion, optimizer, train_loader, num_epochs)
         # Validation
-        model=validate(model, criterion, val_loader)
+        validate(model, criterion, val_loader)
         # Test
-        model=test_model(model, criterion, test_loader)
+        test_model(model, criterion, test_loader)
 
+
+def cross_validate(input_size, hidden_size, output_size, epochs=10, lr=0.001,seed=42):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    val_losses = []
+    val_r_squareds = []
+    best_model = None
+    best_model_index = -1
+    best_val_loss = float('inf')
+    num_folds = 5
+    custom_data=CustomData( batch_size=32,seed=42)
+
+    for fold in range(num_folds):
+        print(f"Fold {fold + 1}/{num_folds}:")
+        # Create model, criterion, and optimizer
+        model = MLP(input_size, hidden_size, output_size)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        train_loader, val_loader, test_loader = custom_data.get_loaders(cv_fold=fold + 1)
+        model = training_loop(model, criterion, optimizer, train_loader, epochs)
+
+        val_loss, val_r_squared = validate(model, criterion, val_loader)
+        val_losses.append(val_loss)
+        val_r_squareds.append(val_r_squared)
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model = model
+            best_model_index = fold
+        # test
+        test_model(model, criterion, test_loader)
+          
+    print(f"\nBest Model: Fold {best_model_index + 1}, Validation Loss: {best_val_loss}")
+    return best_model
+        
 
 
 ## XGBoost
@@ -265,5 +309,5 @@ if __name__ == "__main__":
     input_size = 27 # number of features encoded + dataset
     hidden_size = 64
     output_size = 1 # performance
-    run_training(input_size, hidden_size, output_size,epochs=50, lr=0.001)
+    model=cross_validate(input_size, hidden_size, output_size, epochs=100, lr=0.001,seed=42)
     # train_xgboost()
