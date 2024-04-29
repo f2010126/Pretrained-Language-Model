@@ -88,7 +88,7 @@ def create_cv_folds(folder_path, num_folds=5):
     dataset_series = pd.Series(datasets)
     shuffled_dataset_names = dataset_series.sample(frac=1, random_state=42).reset_index(drop=True)
     split_parts = np.array_split(shuffled_dataset_names, num_folds)
-    combined_df = pd.concat([part.to_frame(name='dataset') for part in split_parts], ignore_index=True)
+    combined_df = pd.concat([part.to_frame(name='Dataset') for part in split_parts], ignore_index=True)
     combined_df['cv_fold'] = np.concatenate([np.full(len(part), i + 1) for i, part in enumerate(split_parts)])
     combined_df.to_csv(os.path.join(folder_path, 'cv_folds.csv'), index=False)
 
