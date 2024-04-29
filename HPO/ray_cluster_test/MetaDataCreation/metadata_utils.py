@@ -3,8 +3,9 @@ import re
 import shutil
 import json
 import random
-
+import numpy as np
 import pandas as pd
+
 
 def generate_nearby_number(number, range_width=10):
     return number + random.randint(-range_width, range_width)
@@ -76,6 +77,22 @@ datasets_main = ['Bundestag-v2', 'Bundestag-v2_1X_2Labels', 'Bundestag-v2_1X_3La
                  'x_stance_10X_8Labels', 'x_stance_10X_9Labels']
 
 pipelines = []
+
+
+def create_cv_folds(folder_path, num_folds=5):
+    # load metadata training set for the datasets
+    with open("/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/nlp_data_m.csv") as f:
+        metadata = pd.read_csv(f)
+        datasets = metadata['Dataset'].unique()
+    # create a list of dataset names as series
+    dataset_series = pd.Series(datasets)
+    shuffled_dataset_names = dataset_series.sample(frac=1, random_state=42).reset_index(drop=True)
+    split_parts = np.array_split(shuffled_dataset_names, num_folds)
+    combined_df = pd.concat([part.to_frame(name='dataset') for part in split_parts], ignore_index=True)
+    combined_df['cv_fold'] = np.concatenate([np.full(len(part), i + 1) for i, part in enumerate(split_parts)])
+    combined_df.to_csv(os.path.join(folder_path, 'cv_folds.csv'), index=False)
+
+
 
 
 def relabel(file_path):
