@@ -108,16 +108,13 @@ class TrainMetaData(Dataset):
 
         # Drop performance and rank columns after assinging to y_train and rank_train
         y_train = training_data['Performance']
-        rank_train = training_data['Rank']
-        X_train = training_data.drop(columns=['Performance', 'Rank']) 
+        X_train = training_data.drop(columns=['Performance', 'Rank','best_value','flat_rank']) 
 
         y_valid = validation_data['Performance']
-        rank_valid = validation_data['Rank']
-        X_valid = validation_data.drop(columns=['Performance', 'Rank'])
+        X_valid = validation_data.drop(columns=['Performance', 'Rank','best_value','flat_rank'])
 
         y_test = test_data['Performance']
-        rank_test = test_data['Rank']
-        X_test = test_data.drop(columns=['Performance', 'Rank'])
+        X_test = test_data.drop(columns=['Performance', 'Rank','best_value','flat_rank'])
 
         # set target values for the regression task
         self.values = {"train":training_data['Performance'].values,
@@ -139,7 +136,7 @@ class TrainMetaData(Dataset):
         return X_train, X_valid, y_train, y_valid, X_test, y_test
 
 
-    def initialize(self):
+    def initialize(self, loss_func="regression"):
         # seed
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -266,12 +263,9 @@ class TestData():
 def  get_data_loader(batch_size, cv_fold, seed):
     # get the data and create the data loaders
     training_data = TrainingDataCV(batch_size, cv_fold, seed)
-    train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
-    # test loader by print the length of the test train valid datasets
-    for  x, acc, y_best in train_loader:
-        print(f"{x.shape} {acc.shape} {y_best.shape}")
-    
+    train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)    
     print(f"Length of train_loader: {len(train_loader)}")
+    return train_loader
     
 if __name__ == "__main__":
     # arg parser
