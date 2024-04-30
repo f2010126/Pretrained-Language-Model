@@ -287,11 +287,20 @@ def train_xgboost():
     print(f"Mean Squared Error on Test set: {mse}")
 
 
+def load_and_test(input_size, hidden_size, output_size):
+    model = MLP(input_size, hidden_size, output_size)
+    model_weights_path = "path_to_your_model_weights.pkl"  # Specify the path to your saved model weights
+    model.load_state_dict(torch.load(model_weights_path))
+
+    
+
 if __name__ == "__main__":
     input_size = 27 # number of features encoded + dataset
     hidden_size = 64
     output_size = 1 # performance
-    model=cross_validate(input_size, hidden_size, output_size, epochs=150, lr=0.001,seed=42)
+    model=cross_validate(input_size, hidden_size, output_size, epochs=10, lr=0.001,seed=42)
     # save the model
-    torch.save(model.state_dict(), 'metamodel.pkl')
+    torch.save(model.state_dict(), '.metamodel.pkl')
+
+    # load_and_test(input_size, hidden_size, output_size)
     # train_xgboost()
