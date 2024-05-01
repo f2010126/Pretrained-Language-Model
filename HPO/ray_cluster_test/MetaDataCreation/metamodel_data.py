@@ -208,8 +208,8 @@ class TrainMetaData(Dataset):
         X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
         y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32)
     
-        self.x = {'train': X_train_tensor, 'val': X_val_tensor, 'test': X_test_tensor}
-        self.y = {'train': y_train_tensor, 'val': y_val_tensor, 'test': y_test_tensor}
+        self.x = {'train': X_train_tensor, 'valid': X_val_tensor, 'test': X_test_tensor}
+        self.y = {'train': y_train_tensor, 'valid': y_val_tensor, 'test': y_test_tensor}
         
 
 
@@ -301,7 +301,7 @@ class TestData():
 
 def  get_data_loader(batch_size, cv_fold, seed,loss_func="regression"):
     # get the data and create the data loaders
-    training_data = TrainingDataCV(batch_size, cv_fold, seed, loss_func)
+    training_data = TrainingDataCV(batch_size=batch_size, fold_no=cv_fold, seed=seed, loss_func=loss_func)
     train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)  
     return train_loader
     
@@ -314,4 +314,4 @@ if __name__ == "__main__":
     parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
     args = parser.parse_args()
     
-    datsetloader = get_data_loader(args.batch_size, args.cv_fold, args.seed, args.loss_func)
+    datsetloader = get_data_loader(batch_size=args.batch_size, cv_fold=args.cv_fold, seed=args.seed, loss_func=args.loss_func)

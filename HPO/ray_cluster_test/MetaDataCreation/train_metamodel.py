@@ -10,7 +10,7 @@ from sklearn.metrics import mean_squared_error
 import pandas as pd
 import xgboost as xgb
 from tqdm import tqdm
-
+from sklearn.metrics import ndcg_score
 
 # local imports
 from metamodel_data import get_data_loader, preprocess_data
@@ -36,11 +36,13 @@ class MLP(nn.Module):
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid() # get values between 0 and 1
 
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu(x)
         x = self.fc2(x)
+        x = self.sigmoid(x)  #squash
         return x
 
 def calculate_r_squared(outputs, labels):
@@ -112,7 +114,7 @@ class TrainModel():
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.criterion = nn.MSELoss()
 
-        self.train_loader=get_data_loader(batch_size, cv_fold=fold_no, seed=self.seed,loss_func=self.loss_func)
+        self.train_loader=get_data_loader(batch_size=batch_size, cv_fold=fold_no, seed=self.seed,loss_func=self.loss_func)
     
 
     def regression_training(self):
@@ -160,15 +162,63 @@ class TrainModel():
         # return an avg loss or something
         return running_loss/batches
 
+    def validation(self,use_set="valid"):
+        self.model.eval()
+        # only for evaluation purposes, change the loss function to regression to load the data  in the correct format
+        self.train_loader.dataset.loss_func='regression'
+        og_set = self.train_loader.dataset.set
+        self.train_loader.dataset.set=use_set
+        y_true = []
+        y_pred = []
+        y_score = []
+        with torch.no_grad():
+            for x, acc, y_best in self.train_loader:
+                outputs = self.model(x)
+
+                # calculate probabilities from outputs
+                probabilities = torch.sigmoid(outputs)
+                # line the outputs and labels up
+                y_true.extend(acc.cpu().numpy())
+
+                y_score.extend(probabilities.cpu().numpy())
+                if isinstance(outputs.squeeze().tolist(), float):
+                    y_pred.append(outputs.squeeze().tolist())
+                else:
+                    y_pred.extend(outputs.squeeze().tolist())
+            
+            # Convert lists to numpy arrays
+        y_true = np.array(y_true)
+        y_score = np.squeeze(y_score)
+        ndcg5 = ndcg_score([y_true], [y_score],k=5)
+        ndcg10 = ndcg_score([y_true], [y_score],k=10)
+        ndcg20 = ndcg_score([y_true], [y_score],k=20)
+        print(f" Set {use_set} Validation NDCG@5: {ndcg5}, NDCG@10: {ndcg10}, NDCG@20: {ndcg20}")
+
+        # after validation, set the loss function back to whatever it was in the train object
+        self.train_loader.dataset.loss_func=self.loss_func
+        self.train_loader.dataset.set=og_set
+        return ndcg5, ndcg10, ndcg20
+        
+
 
     def train(self):
         self.model.train()
         for epoch in tqdm(range(self.epochs)):
             
+            # Training
+            self.train_loader.dataset.set="train"
             if self.loss_func == "regression":
                 avg_loss = self.regression_training()
+            elif self.loss_func == "bpr":
+                avg_loss = self.bpr_training()
 
             print(f"Epoch {epoch+1}, Avg Loss: {avg_loss}")
+
+            # Validation
+            ntr5, ntr10,ntr20= self.validation(use_set="train")
+            nval5, nval10, nval20= self.validation(use_set="valid")
+            
+
         
         return self.model
 
@@ -178,7 +228,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Data Creation")
     parser.add_argument('--batch_size', type=int, default=204, help='batch size should be number of pipelines in the dataset')
     parser.add_argument('--seed', type=int, default=42, help='seed')
-    parser.add_argument('--cv_fold', type=int, default=1, help='cv fold')
+    parser.add_argument('--cv_fold', type=int, default=3, help='cv fold')
     parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
     args = parser.parse_args()
 
@@ -186,7 +236,9 @@ if __name__ == "__main__":
     hidden_size = 64
     output_size = 1 # performance
 
-    trainingObject=TrainModel(input_size, hidden_size, output_size, 10, 0.001, args.batch_size, args.cv_fold, args.loss_func, args.seed)
+    trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
+                              epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
+                              loss_func=args.loss_func, seed=args.seed)
     model=trainingObject.train()
     
     # save the model
