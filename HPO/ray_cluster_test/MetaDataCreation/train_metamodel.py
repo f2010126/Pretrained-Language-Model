@@ -112,7 +112,7 @@ class TrainModel():
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.criterion = nn.MSELoss()
 
-        self.train_loader=get_data_loader(batch_size, fold_no, 'train')
+        self.train_loader=get_data_loader(batch_size, cv_fold=fold_no, seed=self.seed,loss_func=self.loss_func)
     
 
     def regression_training(self):
@@ -132,6 +132,35 @@ class TrainModel():
         # return an avg loss or something
         return running_loss/batches
 
+    def bpr_training(self):
+        self.model.train()
+        batches=0
+        running_loss = 0.0
+
+        for (x, s, l), accuracies, ranks in self.train_loader:
+            self.optimizer.zero_grad()
+            
+            # Perf predictions for target, inferior, superior configurations.
+            outputs = self.model.forward(x)
+            outputs_small = self.model.forward(s)
+            outputs_larger = self.model.forward(l)
+
+            output_gr_smaller = nn.Sigmoid()(outputs - outputs_small)
+            larger_gr_output  = nn.Sigmoid()(outputs_larger - outputs)
+            larger_gr_smaller  = nn.Sigmoid()(outputs_larger - outputs_small)
+
+            logits = torch.cat([output_gr_smaller,larger_gr_output,larger_gr_smaller], 0)
+            loss = nn.BCELoss()(logits, torch.ones_like(logits))
+
+            loss.backward()
+            self.optimizer.step()
+            running_loss += loss.item()
+            batches+=1
+
+        # return an avg loss or something
+        return running_loss/batches
+
+
     def train(self):
         self.model.train()
         for epoch in tqdm(range(self.epochs)):
@@ -147,10 +176,10 @@ class TrainModel():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Data Creation")
-    parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=204, help='batch size should be number of pipelines in the dataset')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=1, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr')
+    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
     args = parser.parse_args()
 
     input_size = 27 # number of features encoded + dataset

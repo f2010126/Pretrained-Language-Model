@@ -1,7 +1,8 @@
 # Handle the data for the metamodel. Convert the data to a format that the metamodel can understand based on the loss function.
 import pandas as pd
 import numpy as np
-
+import random
+from regex import R
 import torch
 import argparse
 from torch.utils.data import DataLoader, TensorDataset, Dataset
@@ -61,16 +62,29 @@ class TrainMetaData(Dataset):
     def __get_bpr_item__(self, index):
         x = self.x[self.set][index]
         y = self.y[self.set][index]
-        r = self.ranks_flat[self.set][index] # what is this one?
+        r = self.ranks_flat[self.set][index] # flatten rank of that one
 
         try:
-            larger_idx  = self.rng.choice(self.larger_set[index]) # randomly select a larger index from the larger set
+            larger_idx  = random.choice(self.larger_set[index]) # randomly select a larger index from the larger set
         except ValueError:
+            larger_idx=index
+        except IndexError:
+            # the array is empty
+            larger_idx = index
+        except Exception as e:
+            # other error
+            print(f"Other Exception: {e}")
             larger_idx=index
 
         try:
-            smaller_idx = self.rng.choice(self.smaller_set[index]) # randomly select a smaller index from the smaller set
+            smaller_idx = random.choice(self.smaller_set[index]) # randomly select a smaller index from the smaller set
         except ValueError:
+            smaller_idx = index
+        except IndexError:
+            # the array is empty
+            smaller_idx = index
+        except Exception as e:
+            print(f"Other Exception: {e}")
             smaller_idx = index
 
         # get the features for the larger and smaller indices
@@ -80,7 +94,24 @@ class TrainMetaData(Dataset):
         r_l = self.ranks_flat[self.set][larger_idx] # rank of the larger index  
 
         # returns features, accuracy and ranks of the item and the larger and smaller items
-        return (x,s,l), (y, self.y[self.set][smaller_idx], self.y[self.set][larger_idx]), (r,r_s,r_l)\
+        return (x,s,l), (y, self.y[self.set][smaller_idx], self.y[self.set][larger_idx]), (r,r_s,r_l)
+    
+
+    def set_bpr_sampling(self, dataframe):
+        # for the models in each dataset, list the ones with higher and lower accuracy
+        self.larger_set = []
+        self.smaller_set = []
+        grouped = dataframe.groupby('Dataset')
+        # Iterate over each group
+        for _, group in grouped:
+            for idx, row in group.iterrows():
+                performance = row['Performance']
+                lower_models = group[group['Performance'] < performance].index.tolist()
+                higher_models = group[group['Performance'] > performance].index.tolist()
+        
+                self.smaller_set.append(lower_models)
+                self.larger_set.append(higher_models)
+
     
 
     def split_dataset(self):
@@ -98,13 +129,30 @@ class TrainMetaData(Dataset):
         validation_data = self.full_train_data[self.full_train_data['Dataset'].isin(cv_datasets)]
         training_data = self.full_train_data[~self.full_train_data['Dataset'].isin(cv_datasets)]
 
-        validation_data = validation_data.drop(columns=['Dataset', 'IncumbentOf'])
-        training_data = training_data.drop(columns=['Dataset', 'IncumbentOf'])
+ 
 
         # shuffle the training data and split into 2 dataframes 10% and remaining 90%
         shuffle_data = training_data.sample(frac=1).reset_index(drop=True)
         training_data=shuffle_data.sample(frac=0.9, random_state=self.seed)
         test_data=shuffle_data.drop(training_data.index).reset_index(drop=True)
+
+        # get the shuffled set. Reset the index
+        training_data.reset_index(drop=True, inplace=True)
+        # do the pairwise sampling for the BPR loss function
+        if self.loss_func=='bpr':
+            self.set_bpr_sampling(training_data)
+
+        # drop the dataset and incumbent columns
+        self.datasetnames = {'train':training_data['Dataset'],
+                             'valid':validation_data['Dataset'],
+                             'test':test_data['Dataset']}
+        self.pipelines = {'train':training_data['IncumbentOf'],
+                            'valid':validation_data['IncumbentOf'],
+                            'test':test_data['IncumbentOf']}
+        validation_data = validation_data.drop(columns=['Dataset', 'IncumbentOf'])
+        training_data = training_data.drop(columns=['Dataset', 'IncumbentOf'])
+        test_data = test_data.drop(columns=['Dataset', 'IncumbentOf'])
+
 
         # Drop performance and rank columns after assinging to y_train and rank_train
         y_train = training_data['Performance']
@@ -117,6 +165,7 @@ class TrainMetaData(Dataset):
         X_test = test_data.drop(columns=['Performance', 'Rank','best_value','flat_rank'])
 
         # set target values for the regression task
+
         self.values = {"train":training_data['Performance'].values,
                         "valid":validation_data['Performance'].values,
                         "test":test_data['Performance'].values}
@@ -135,11 +184,11 @@ class TrainMetaData(Dataset):
 
         return X_train, X_valid, y_train, y_valid, X_test, y_test
 
-
     def initialize(self, loss_func="regression"):
         # seed
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+        random.seed(self.seed)
         # load the data and cv folds
         self.cv_folds = pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/cv_folds.csv')
         dataframe = pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/nlp_data_m.csv')
@@ -151,8 +200,6 @@ class TrainMetaData(Dataset):
 
         # NOW scale, standardize the data and prep the Binary Pairwise Ranking (BPR) data
 
-        if self.loss_func=='bpr':
-            self.set_pairwise_sampling_sets(y_train)
         
         X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
         y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32)
@@ -174,16 +221,8 @@ class TrainingDataCV(TrainMetaData):
             self.cv_fold_no=fold_no
             self.loss_func=loss_func
             self.set = 'train'
-            self.initialize()
+            self.initialize(loss_func=loss_func)
         
-
-    
-
-
-
-
-
-
 
 
 class OldTrainingDataCV():
@@ -260,11 +299,10 @@ class TestData():
         test_dataset = TensorDataset(X_test_tensor)
 
 
-def  get_data_loader(batch_size, cv_fold, seed):
+def  get_data_loader(batch_size, cv_fold, seed,loss_func="regression"):
     # get the data and create the data loaders
-    training_data = TrainingDataCV(batch_size, cv_fold, seed)
-    train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)    
-    print(f"Length of train_loader: {len(train_loader)}")
+    training_data = TrainingDataCV(batch_size, cv_fold, seed, loss_func)
+    train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)  
     return train_loader
     
 if __name__ == "__main__":
@@ -272,8 +310,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Data Creation")
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--seed', type=int, default=42, help='seed')
-    parser.add_argument('--cv_fold', type=int, default=1, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr')
+    parser.add_argument('--cv_fold', type=int, default=5, help='cv fold')
+    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
     args = parser.parse_args()
     
-    get_data_loader(args.batch_size, args.cv_fold, args.seed)
+    datsetloader = get_data_loader(args.batch_size, args.cv_fold, args.seed, args.loss_func)
