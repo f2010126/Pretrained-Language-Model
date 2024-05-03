@@ -189,6 +189,7 @@ class TrainModel():
             # Convert lists to numpy arrays
         y_true = np.array(y_true)
         y_score = np.squeeze(y_score)
+        ndcg1=ndcg_score([y_true], [y_score],k=1)
         ndcg5 = ndcg_score([y_true], [y_score],k=5)
         ndcg10 = ndcg_score([y_true], [y_score],k=10)
         ndcg20 = ndcg_score([y_true], [y_score],k=20)
@@ -197,7 +198,7 @@ class TrainModel():
         # after validation, set the loss function back to whatever it was in the train object
         self.train_loader.dataset.loss_func=self.loss_func
         self.train_loader.dataset.set=og_set
-        return ndcg5, ndcg10, ndcg20
+        return ndcg1
         
 
 
@@ -215,12 +216,12 @@ class TrainModel():
             print(f"Epoch {epoch+1}, Avg Loss: {avg_loss}")
 
             # Validation
-            ntr5, ntr10,ntr20= self.validation(use_set="train")
-            nval5, nval10, nval20= self.validation(use_set="valid")
+            ndcg1_train= self.validation(use_set="train")
+            ndcg1_valid= self.validation(use_set="valid")
             
 
         
-        return self.model
+        return self.model, ndcg1_valid
 
     
 
@@ -239,7 +240,7 @@ if __name__ == "__main__":
     trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
                               epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
                               loss_func=args.loss_func, seed=args.seed)
-    model=trainingObject.train()
+    model, ndcg1_val=trainingObject.train()
     
     # save the model
     torch.save(model.state_dict(), f'.metamodel_cvfold{args.cv_fold}_{args.loss_func}.pkl')
