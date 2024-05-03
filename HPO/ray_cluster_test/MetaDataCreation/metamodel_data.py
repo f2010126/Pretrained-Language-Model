@@ -43,7 +43,7 @@ class TrainMetaData(Dataset):
     def __getitem__(self, index):
         if self.loss_func == "regression":
             return self.__get_regression_item__(index)
-        elif self.loss_func == "bpr" or self.loss_func == "tml":
+        elif self.loss_func == "bpr" or self.loss_func == "tml" or self.loss_func == "hingeloss":
             return self.__get_bpr_item__(index)
     
     def __len__(self):
@@ -139,7 +139,7 @@ class TrainMetaData(Dataset):
         # get the shuffled set. Reset the index
         training_data.reset_index(drop=True, inplace=True)
         # do the pairwise sampling for the BPR loss function
-        if self.loss_func=='bpr':
+        if self.loss_func=='bpr' or self.loss_func=='tml' or self.loss_func=='hingeloss':
             self.set_bpr_sampling(training_data)
 
         # drop the dataset and incumbent columns
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=5, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
+    parser.add_argument('--loss_func', type=str, default='hingeloss', help='loss function can be regression|bpr|hingeloss')
     args = parser.parse_args()
     
     datsetloader = get_data_loader(batch_size=args.batch_size, cv_fold=args.cv_fold, seed=args.seed, loss_func=args.loss_func)

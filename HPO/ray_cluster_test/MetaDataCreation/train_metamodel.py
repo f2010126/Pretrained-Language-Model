@@ -1,5 +1,6 @@
 
 import argparse
+import re
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,6 +15,7 @@ from sklearn.metrics import ndcg_score
 
 # local imports
 from metamodel_data import get_data_loader, preprocess_data
+
 
 optimizer_columns=['Adam','AdamW''SGD','RAdam']
 scheduler_columns=['linear_with_warmup', 'cosine_with_warmup', 
@@ -134,6 +136,31 @@ class TrainModel():
         # return an avg loss or something
         return running_loss/batches
 
+    def hingeloss_training(self):
+        self.model.train()
+        batches = 0
+        running_loss = 0.0
+
+        for (x, s, l), accuracies, ranks in self.train_loader:
+            self.optimizer.zero_grad()
+        
+            outputs = self.model.forward(x)
+            outputs_small = self.model.forward(s)
+            outputs_larger = self.model.forward(l)
+
+       
+            hinge_loss = nn.MarginRankingLoss(margin=1.0)
+            targets = torch.ones(outputs.shape[0], dtype=torch.float32).unsqueeze(-1)  # Positive pairs
+            loss = hinge_loss(outputs, outputs_small, targets)  # Loss for smaller performance configurations
+            loss += hinge_loss(outputs, outputs_larger, -targets)  # Loss for larger performance configurations
+
+            loss.backward()
+            self.optimizer.step()
+            running_loss += loss.item()
+            batches += 1
+
+        return running_loss / batches
+
     def bpr_training(self):
         self.model.train()
         batches=0
@@ -193,14 +220,15 @@ class TrainModel():
         ndcg5 = ndcg_score([y_true], [y_score],k=5)
         ndcg10 = ndcg_score([y_true], [y_score],k=10)
         ndcg20 = ndcg_score([y_true], [y_score],k=20)
-        print(f" Set {use_set} Validation NDCG@5: {ndcg5}, NDCG@10: {ndcg10}, NDCG@20: {ndcg20}")
+        # print(f" Set {use_set} Validation NDCG@5: {ndcg5}, NDCG@10: {ndcg10}, NDCG@20: {ndcg20}")
 
         # after validation, set the loss function back to whatever it was in the train object
         self.train_loader.dataset.loss_func=self.loss_func
         self.train_loader.dataset.set=og_set
         return ndcg1
         
-
+    def test(self):
+        return self.validation(use_set="test")
 
     def train(self):
         self.model.train()
@@ -212,6 +240,8 @@ class TrainModel():
                 avg_loss = self.regression_training()
             elif self.loss_func == "bpr":
                 avg_loss = self.bpr_training()
+            elif self.loss_func == "hingeloss":
+                avg_loss = self.hingeloss_training()
 
             print(f"Epoch {epoch+1}, Avg Loss: {avg_loss}")
 
@@ -219,8 +249,6 @@ class TrainModel():
             ndcg1_train= self.validation(use_set="train")
             ndcg1_valid= self.validation(use_set="valid")
             
-
-        
         return self.model, ndcg1_valid
 
     
@@ -230,7 +258,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=204, help='batch size should be number of pipelines in the dataset')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=3, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr')
+    parser.add_argument('--loss_func', type=str, default='hingeloss', help='loss function can be regression|bpr|hingeloss')
     args = parser.parse_args()
 
     input_size = 27 # number of features encoded + dataset
@@ -241,6 +269,7 @@ if __name__ == "__main__":
                               epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
                               loss_func=args.loss_func, seed=args.seed)
     model, ndcg1_val=trainingObject.train()
+    test_ndcg1=trainingObject.test()
     
     # save the model
     torch.save(model.state_dict(), f'.metamodel_cvfold{args.cv_fold}_{args.loss_func}.pkl')
