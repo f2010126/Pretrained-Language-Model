@@ -270,6 +270,7 @@ if __name__ == "__main__":
                               loss_func=args.loss_func, seed=args.seed)
     model, ndcg1_val=trainingObject.train()
     test_ndcg1=trainingObject.test()
+    print(f"Validation NDCG@1: {ndcg1_val}, Test NDCG@1: {test_ndcg1}")
     
     # save the model
     torch.save(model.state_dict(), f'.metamodel_cvfold{args.cv_fold}_{args.loss_func}.pkl')
