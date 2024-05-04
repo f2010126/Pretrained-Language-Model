@@ -1,6 +1,7 @@
 
 import argparse
 import re
+import sched
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -113,8 +114,22 @@ class TrainModel():
         self.seed = seed
         # model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = MLP(input_size, hidden_size, output_size)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.model = MLP(input_size, hidden_size, output_size).to(self.device)
+
+        if config['optimizer_type'] == 'Adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        elif config['optimizer_type'] == 'SGD':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=config['sgd_momentum'])
+        else:
+            self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
+        
+        if config['scheduler_type'] == 'ReduceLROnPlateau':
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, verbose=True)
+        elif config['scheduler_type'] == 'CosineAnnealingLR':
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=10, eta_min=0)
+        else:
+            self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=0.1, steps_per_epoch=10, epochs=10)
+    
         self.criterion = nn.MSELoss()
         self.config=config
 
@@ -251,6 +266,7 @@ class TrainModel():
                 avg_loss = self.hingeloss_training()
 
             print(f"Epoch {epoch+1}, Avg Loss: {avg_loss}")
+            self.scheduler.step()
 
             # Validation
             ndcg1_train= self.validation(use_set="train")

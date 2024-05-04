@@ -45,9 +45,9 @@ class SurrogateWorker(Worker):
             obj=TrainModel(input_size=self.input_size, hidden_size=64, output_size=self.output_size, 
                               epochs=int(budget), lr=config['lr'], batch_size=self.batch_size, 
                               fold_no=config['cv_fold'], loss_func=self.loss_func, seed=self.seed, config=config)
-            # model, ndcg1_val=obj.train()
-            #res=obj.test()
-            res = numpy.clip(config['x'] + numpy.random.randn()/budget, config['x']/2, 1.5*config['x'])
+            model, ndcg1_val=obj.train()
+            res=obj.test()
+            # res = random.random()
         except Exception as e:
             print(f'Error in training the model: {e}')
             return({
@@ -55,8 +55,6 @@ class SurrogateWorker(Worker):
                     'info': {'run':'Failed','test':-100}  # can be used for any user-defined information - also mandatory
                 })
         
-        res = numpy.clip(config['x'] + numpy.random.randn()/budget, config['x']/2, 1.5*config['x'])
-
         return({
                     'loss': -float(res),  # this is the a mandatory field to run hyperband
                     'info': {'run':'Sucess','test':res}  # can be used for any user-defined information - also mandatory
@@ -67,10 +65,10 @@ class SurrogateWorker(Worker):
         
         lr = CSH.UniformFloatHyperparameter('lr', lower=1e-6, upper=1e-2, log=True)
         min_lr = CSH.UniformFloatHyperparameter('min_lr', lower=1e-8, upper=1e-6, log=True)
-        optimizer = CSH.CategoricalHyperparameter('optimizer', ['Adam', 'SGD', 'AdamW'])
+        optimizer_type = CSH.CategoricalHyperparameter('optimizer_type', ['Adam', 'SGD'])
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-6, upper=1e-2, log=True)
-        batch_size = CSH.UniformIntegerHyperparameter('batch_size', lower=8, upper=128, default_value=64)
-        cs.add_hyperparameters([lr, min_lr, optimizer, weight_decay, batch_size])
+        scheduler_type = CSH.CategoricalHyperparameter('scheduler_type', ['ReduceLROnPlateau', 'CosineAnnealingLR'])
+        cs.add_hyperparameters([lr, min_lr, optimizer_type, weight_decay, scheduler_type])
         
         num_hidden_layers =  CSH.UniformIntegerHyperparameter('num_hidden_layers', lower=2, upper=10)
         num_hidden_units = CSH.UniformIntegerHyperparameter('num_hidden_units', lower=32, upper=512)
@@ -82,7 +80,7 @@ class SurrogateWorker(Worker):
         sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
         cv_fold = CSH.UniformIntegerHyperparameter('cv_fold', lower=1, upper=5)
         cs.add_hyperparameters([sgd_momentum, cv_fold])
-        momentum_cond = CS.EqualsCondition(sgd_momentum, optimizer, 'SGD')
+        momentum_cond = CS.EqualsCondition(sgd_momentum, optimizer_type, 'SGD')
         cs.add_conditions([momentum_cond])
         
         return cs 
@@ -92,9 +90,9 @@ class SurrogateWorker(Worker):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Optimize the metamodel')
-    parser.add_argument('--min_budget',   type=float, help='Minimum budget used during the optimization.', default=1)
-    parser.add_argument('--max_budget',   type=float, help='Maximum budget used during the optimization.', default=3)
-    parser.add_argument('--n_iterations', type=int,   help='Number of iterations performed by the optimizer', default=1)
+    parser.add_argument('--min_budget',   type=float, help='Minimum budget used during the optimization.', default=10)
+    parser.add_argument('--max_budget',   type=float, help='Maximum budget used during the optimization.', default=20)
+    parser.add_argument('--n_iterations', type=int,   help='Number of iterations performed by the optimizer', default=2)
     parser.add_argument('--n_workers',    type=int,   help='Number of workers to run in parallel.', default=1)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
     parser.add_argument('--run_id', type=str, help='A unique run id for this optimization run. An easy option is to use the job id of the clusters scheduler.',
