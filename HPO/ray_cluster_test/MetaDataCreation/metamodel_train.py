@@ -103,7 +103,7 @@ def train_xgboost():
 
 
 class TrainModel():
-    def __init__(self, input_size, hidden_size, output_size, epochs, lr, batch_size, fold_no, loss_func, seed):
+    def __init__(self, input_size, hidden_size, output_size, epochs, lr, batch_size, fold_no, loss_func, seed,config=None):
 
         self.epochs = epochs
         self.lr = lr
@@ -115,6 +115,7 @@ class TrainModel():
         self.model = MLP(input_size, hidden_size, output_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.criterion = nn.MSELoss()
+        self.config=config
 
         self.train_loader=get_data_loader(batch_size=batch_size, cv_fold=fold_no, seed=self.seed,loss_func=self.loss_func)
     
