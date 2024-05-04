@@ -112,6 +112,7 @@ class TrainModel():
         self.loss_func = loss_func
         self.seed = seed
         # model
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = MLP(input_size, hidden_size, output_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.criterion = nn.MSELoss()
@@ -126,7 +127,9 @@ class TrainModel():
         running_loss = 0.0
 
         for x, acc, y_best in self.train_loader:
+            x, acc = x.to(self.device), acc.to(self.device)
             self.optimizer.zero_grad()
+
             outputs = self.model(x)
             loss = nn.MSELoss()(outputs, acc.unsqueeze(-1))
             loss.backward()
@@ -143,6 +146,7 @@ class TrainModel():
         running_loss = 0.0
 
         for (x, s, l), accuracies, ranks in self.train_loader:
+            x, s, l = x.to(self.device), s.to(self.device), l.to(self.device)
             self.optimizer.zero_grad()
         
             outputs = self.model.forward(x)
@@ -168,6 +172,7 @@ class TrainModel():
         running_loss = 0.0
 
         for (x, s, l), accuracies, ranks in self.train_loader:
+            x, s, l = x.to(self.device), s.to(self.device), l.to(self.device)
             self.optimizer.zero_grad()
             
             # Perf predictions for target, inferior, superior configurations.
@@ -180,7 +185,7 @@ class TrainModel():
             larger_gr_smaller  = nn.Sigmoid()(outputs_larger - outputs_small)
 
             logits = torch.cat([output_gr_smaller,larger_gr_output,larger_gr_smaller], 0)
-            loss = nn.BCELoss()(logits, torch.ones_like(logits))
+            loss = nn.BCELoss()(logits, torch.ones_like(logits).to(self.device))
 
             loss.backward()
             self.optimizer.step()
@@ -201,6 +206,7 @@ class TrainModel():
         y_score = []
         with torch.no_grad():
             for x, acc, y_best in self.train_loader:
+                x, acc = x.to(self.device), acc.to(self.device)
                 outputs = self.model(x)
 
                 # calculate probabilities from outputs
