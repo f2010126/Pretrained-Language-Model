@@ -82,6 +82,12 @@ class SurrogateWorker(Worker):
         cs.add_hyperparameters([sgd_momentum, cv_fold])
         momentum_cond = CS.EqualsCondition(sgd_momentum, optimizer_type, 'SGD')
         cs.add_conditions([momentum_cond])
+
+        num_hidden_layers =  CSH.UniformIntegerHyperparameter('num_hidden_layers', lower=2, upper=10)
+        num_hidden_units = CSH.UniformIntegerHyperparameter('num_hidden_units', lower=32, upper=512)
+        cs.add_hyperparameters([num_hidden_layers, num_hidden_units])
+        dropout_rate = CSH.UniformFloatHyperparameter('dropout_rate', lower=0.0, upper=0.9, log=False)
+        cs.add_hyperparameters([dropout_rate])
         
         return cs 
 

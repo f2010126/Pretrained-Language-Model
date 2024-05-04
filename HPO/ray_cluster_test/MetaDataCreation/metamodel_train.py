@@ -35,19 +35,37 @@ model_columns=["bert-base-uncased",
 # seed everything
 # Define MLP model
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, output_size,num_hidden_layers, neurons_per_layer, dropout_prob=0.5):
         super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.layers = nn.ModuleList()
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.layers.append(nn.Linear(input_size, neurons_per_layer))
+
+        for _ in range(num_hidden_layers - 1):
+            self.layers.append(nn.Linear(neurons_per_layer, neurons_per_layer))
+        
+        self.output_layer = nn.Linear(neurons_per_layer, output_size)
         self.sigmoid = nn.Sigmoid() # get values between 0 and 1
 
+        # self.fc1 = nn.Linear(input_size, hidden_size)
+        # self.relu = nn.ReLU()
+        # self.fc2 = nn.Linear(hidden_size, output_size)
+        # self.sigmoid = nn.Sigmoid() # get values between 0 and 1
+
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        x = self.sigmoid(x)  #squash
+        for layer in self.layers:
+            x = self.activation(layer(x))
+            x = self.dropout(x)
+        x = self.output_layer(x)
+        x = self.sigmoid(x)
         return x
+        # x = self.fc1(x)
+        # x = self.relu(x)
+        # x = self.fc2(x)
+        # x = self.sigmoid(x)  #squash
+        # return x
 
 def calculate_r_squared(outputs, labels):
     # Calculate R-squared
@@ -115,7 +133,10 @@ class TrainModel():
         self.seed = seed
         # model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = MLP(input_size, hidden_size, output_size).to(self.device)
+        self.model = MLP(input_size=input_size, output_size= output_size,
+                         num_hidden_layers=config['num_hidden_layers'], 
+                         neurons_per_layer=config['num_hidden_units'],
+                         dropout_prob=config['dropout_rate'] ).to(self.device)
 
         if config['optimizer_type'] == 'Adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
@@ -172,6 +193,7 @@ class TrainModel():
        
             hinge_loss = nn.MarginRankingLoss(margin=1.0)
             targets = torch.ones(outputs.shape[0], dtype=torch.float32).unsqueeze(-1)  # Positive pairs
+            targets = targets.to(self.device)
             loss = hinge_loss(outputs, outputs_small, targets)  # Loss for smaller performance configurations
             loss += hinge_loss(outputs, outputs_larger, -targets)  # Loss for larger performance configurations
 
@@ -289,7 +311,8 @@ if __name__ == "__main__":
     hidden_size = 64
     output_size = 1 # performance
 
-    config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'CosineAnnealingWarmRestarts', 'cv_fold': 3, 'sgd_momentum': 0.9}
+    config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'CosineAnnealingWarmRestarts', 'cv_fold': 3, 'sgd_momentum': 0.9,
+            'num_hidden_layers': 4, 'num_hidden_units': 128, 'dropout_rate': 0.2}
 
     trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
                               epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
