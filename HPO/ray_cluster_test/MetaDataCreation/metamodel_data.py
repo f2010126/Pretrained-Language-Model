@@ -8,7 +8,7 @@ import argparse
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-
+from tqdm import tqdm
 
 
 
@@ -103,7 +103,7 @@ class TrainMetaData(Dataset):
         self.smaller_set = []
         grouped = dataframe.groupby('Dataset')
         # Iterate over each group
-        for _, group in grouped:
+        for _, group in tqdm(grouped):
             for idx, row in group.iterrows():
                 performance = row['Performance']
                 lower_models = group[group['Performance'] < performance].index.tolist()
@@ -140,6 +140,7 @@ class TrainMetaData(Dataset):
         training_data.reset_index(drop=True, inplace=True)
         # do the pairwise sampling for the BPR loss function
         if self.loss_func=='bpr' or self.loss_func=='tml' or self.loss_func=='hingeloss':
+            print("Setting Pairwise Loss sampling. This will take time")
             self.set_bpr_sampling(training_data)
 
         # drop the dataset and incumbent columns

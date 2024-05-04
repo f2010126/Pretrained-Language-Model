@@ -67,7 +67,7 @@ class SurrogateWorker(Worker):
         min_lr = CSH.UniformFloatHyperparameter('min_lr', lower=1e-8, upper=1e-6, log=True)
         optimizer_type = CSH.CategoricalHyperparameter('optimizer_type', ['Adam', 'SGD'])
         weight_decay = CSH.UniformFloatHyperparameter('weight_decay', lower=1e-6, upper=1e-2, log=True)
-        scheduler_type = CSH.CategoricalHyperparameter('scheduler_type', ['ReduceLROnPlateau', 'CosineAnnealingLR'])
+        scheduler_type = CSH.CategoricalHyperparameter('scheduler_type', ['ReduceLROnPlateau', 'CosineAnnealingLR','CosineAnnealingWarmRestarts'])
         cs.add_hyperparameters([lr, min_lr, optimizer_type, weight_decay, scheduler_type])
         
         num_hidden_layers =  CSH.UniformIntegerHyperparameter('num_hidden_layers', lower=2, upper=10)

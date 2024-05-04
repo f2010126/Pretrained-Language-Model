@@ -128,8 +128,8 @@ class TrainModel():
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, verbose=True)
         elif config['scheduler_type'] == 'CosineAnnealingLR':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=10, eta_min=0)
-        else:
-            self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=0.1, steps_per_epoch=10, epochs=10)
+        elif config['scheduler_type'] == 'CosineAnnealingWarmRestarts':
+            self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2, eta_min=0)
     
         self.criterion = nn.MSELoss()
         self.config=config
@@ -289,7 +289,7 @@ if __name__ == "__main__":
     hidden_size = 64
     output_size = 1 # performance
 
-    config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'ReduceLROnPlateau', 'cv_fold': 3, 'sgd_momentum': 0.9}
+    config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'CosineAnnealingWarmRestarts', 'cv_fold': 3, 'sgd_momentum': 0.9}
 
     trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
                               epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
