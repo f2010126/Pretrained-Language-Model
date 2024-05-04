@@ -49,11 +49,6 @@ class MLP(nn.Module):
         self.output_layer = nn.Linear(neurons_per_layer, output_size)
         self.sigmoid = nn.Sigmoid() # get values between 0 and 1
 
-        # self.fc1 = nn.Linear(input_size, hidden_size)
-        # self.relu = nn.ReLU()
-        # self.fc2 = nn.Linear(hidden_size, output_size)
-        # self.sigmoid = nn.Sigmoid() # get values between 0 and 1
-
     def forward(self, x):
         for layer in self.layers:
             x = self.activation(layer(x))
@@ -61,11 +56,6 @@ class MLP(nn.Module):
         x = self.output_layer(x)
         x = self.sigmoid(x)
         return x
-        # x = self.fc1(x)
-        # x = self.relu(x)
-        # x = self.fc2(x)
-        # x = self.sigmoid(x)  #squash
-        # return x
 
 def calculate_r_squared(outputs, labels):
     # Calculate R-squared
@@ -304,7 +294,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=204, help='batch size should be number of pipelines in the dataset')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=3, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='hingeloss', help='loss function can be regression|bpr|hingeloss')
+    parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr|hingeloss')
     args = parser.parse_args()
 
     input_size = 27 # number of features encoded + dataset

@@ -70,12 +70,6 @@ class SurrogateWorker(Worker):
         scheduler_type = CSH.CategoricalHyperparameter('scheduler_type', ['ReduceLROnPlateau', 'CosineAnnealingLR','CosineAnnealingWarmRestarts'])
         cs.add_hyperparameters([lr, min_lr, optimizer_type, weight_decay, scheduler_type])
         
-        num_hidden_layers =  CSH.UniformIntegerHyperparameter('num_hidden_layers', lower=2, upper=10)
-        num_hidden_units = CSH.UniformIntegerHyperparameter('num_hidden_units', lower=32, upper=512)
-        cs.add_hyperparameters([num_hidden_layers, num_hidden_units])
-        
-        dropout_rate = CSH.UniformFloatHyperparameter('dropout_rate', lower=0.0, upper=0.9, log=False)
-        cs.add_hyperparameters([dropout_rate])
         
         sgd_momentum = CSH.UniformFloatHyperparameter('sgd_momentum', lower=0.0, upper=0.99, log=False)
         cv_fold = CSH.UniformIntegerHyperparameter('cv_fold', lower=1, upper=5)
