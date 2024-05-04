@@ -1,5 +1,6 @@
 
 import argparse
+from logging import config
 import re
 import sched
 import torch
@@ -288,9 +289,11 @@ if __name__ == "__main__":
     hidden_size = 64
     output_size = 1 # performance
 
+    config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'ReduceLROnPlateau', 'cv_fold': 3, 'sgd_momentum': 0.9}
+
     trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
                               epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
-                              loss_func=args.loss_func, seed=args.seed)
+                              loss_func=args.loss_func, seed=args.seed,config=config)
     model, ndcg1_val=trainingObject.train()
     test_ndcg1=trainingObject.test()
     print(f"Validation NDCG@1: {ndcg1_val}, Test NDCG@1: {test_ndcg1}")

@@ -111,7 +111,8 @@ if __name__ == "__main__":
     parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr|hingeloss')
     parser.add_argument('--batch_size', type=int, default=204, help='Batch size of the model')
     
-
+    # sample command from terminal:
+    # python metamodel_optimise.py --min_budget 10 --max_budget 20 --n_iterations 2 --n_workers 1 --run_id optimiseModel --nic_name en0 --shared_directory ddp_debug --previous_run None --seed 42 --input_size 27 --output_size 1 --loss_func regression --batch_size 204
     
     
     args = parser.parse_args()
