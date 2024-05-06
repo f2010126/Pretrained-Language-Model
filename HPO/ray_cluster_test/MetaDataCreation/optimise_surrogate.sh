@@ -13,7 +13,7 @@
 cd /work/dlclarge1/dsengupt-zap_hpo_og/TinyBert/HPO/ray_cluster_test/MetaDataCreation
 source metatest_env/bin/activate
 
-echo 'Run Surrogate Training'
+echo 'Optimise Surrogate Training'
 
 python metamodel_optimise.py --min_budget 100 --max_budget 200 --n_iterations 2 --n_workers 1 --run_id optimiseRegression1 \
 --nic_name eth0 --shared_directory metaModelHPO --previous_run None --seed 42 --input_size 27 --output_size 1 \

@@ -310,14 +310,17 @@ class TrainModel():
     
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("Data Creation")
+    parser = argparse.ArgumentParser("Training Surrogate Model")
     parser.add_argument('--batch_size', type=int, default=204, help='batch size should be number of pipelines in the dataset')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=3, help='cv fold')
-    parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr|hingeloss')
+    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr|hingeloss')
     parser.add_argument('--epochs', type=int, default=3, help='Number of Epochs')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs before early stopping')
     args = parser.parse_args()
+
+    # sample terminal command
+    # python metamodel_train.py --batch_size 204 --seed 42 --cv_fold 3 --loss_func bpr --epochs 3 --patience 10
 
     input_size = 27 # number of features encoded + dataset
     hidden_size = 64
