@@ -113,7 +113,7 @@ def train_xgboost():
 
 
 class TrainModel():
-    def __init__(self, input_size, hidden_size, output_size, epochs, lr, batch_size, fold_no, loss_func, seed,config=None):
+    def __init__(self, input_size, output_size, epochs, lr, batch_size, fold_no, loss_func, seed,patience=10,config=None):
 
         self.epochs = epochs
         self.lr = lr
@@ -122,6 +122,7 @@ class TrainModel():
         self.loss_func = loss_func
         self.seed = seed
         # model
+        self.patience = patience  # for early stopping
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = MLP(input_size=input_size, output_size= output_size,
                          num_hidden_layers=config['num_hidden_layers'], 
@@ -146,6 +147,22 @@ class TrainModel():
         self.config=config
 
         self.train_loader=get_data_loader(batch_size=batch_size, cv_fold=fold_no, seed=self.seed,loss_func=self.loss_func)
+        self.best_loss = float('inf')
+        self.counter = 0  # Counter to keep track of epochs without improvement
+    
+    # Early stopping
+    def early_stopping(self, current_loss):
+        if current_loss < self.best_loss:
+            self.best_loss = current_loss
+            self.counter = 0
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                print(f"Validation loss hasn't improved for {self.patience} epochs. Early stopping...")
+                return True
+            else:
+                return False
     
 
     def regression_training(self):
@@ -284,6 +301,9 @@ class TrainModel():
             # Validation
             ndcg1_train= self.validation(use_set="train")
             ndcg1_valid= self.validation(use_set="valid")
+            if self.early_stopping(ndcg1_valid):
+                print("Early stopping...")
+                break
             
         return self.model, ndcg1_valid
 
@@ -295,6 +315,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=3, help='cv fold')
     parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr|hingeloss')
+    parser.add_argument('--epochs', type=int, default=3, help='Number of Epochs')
+    parser.add_argument('--patience', type=int, default=10, help='Number of epochs before early stopping')
     args = parser.parse_args()
 
     input_size = 27 # number of features encoded + dataset
@@ -302,17 +324,37 @@ if __name__ == "__main__":
     output_size = 1 # performance
 
     config={'optimizer_type': 'Adam', 'lr': 0.0001, 'scheduler_type': 'CosineAnnealingWarmRestarts', 'cv_fold': 3, 'sgd_momentum': 0.9,
-            'num_hidden_layers': 4, 'num_hidden_units': 128, 'dropout_rate': 0.2}
+            'num_hidden_layers': 4, 'num_hidden_units': 128, 'dropout_rate': 0.2, 'cv_fold': args.cv_fold, }
+    
+    best_bpr_config={'cv_fold': 1, 'dropout_rate': 0.7015103306637684, 'lr': 5.135969983335287e-06, 'min_lr': 3.364385374653254e-07, 
+                     'num_hidden_layers': 5, 'num_hidden_units': 425, 'optimizer_type': 'SGD', 'scheduler_type': 'CosineAnnealingWarmRestarts', 
+                     'weight_decay': 7.2540973417840435e-06, 'sgd_momentum': 0.04240794281763762}
+    best_regression_config={'cv_fold': 2, 'dropout_rate': 0.3913409988075172, 'lr': 3.7362613827282154e-05, 'min_lr': 1.9566985127805457e-08, 
+                            'num_hidden_layers': 10, 'num_hidden_units': 238, 'optimizer_type': 'Adam', 'scheduler_type': 'CosineAnnealingLR', 
+                            'weight_decay': 0.0013824721415630014}
+    best_hinge_config= {"cv_fold": 4, "dropout_rate": 0.891048465093837, "lr": 3.6335911653931684e-06, "min_lr": 1.0880761845917628e-07,
+                         "num_hidden_layers": 9, "num_hidden_units": 388, "optimizer_type": "SGD",
+                           "scheduler_type": "CosineAnnealingWarmRestarts", "weight_decay": 2.7413507419758263e-05, 
+                           "sgd_momentum": 0.2906559258218484}
+    
+    if args.loss_func == 'regression':
+        config=best_regression_config
+    elif args.loss_func == 'hingeloss':
+        config=best_hinge_config
+    elif args.loss_func == 'bpr':
+        config=best_bpr_config
 
-    trainingObject=TrainModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, 
-                              epochs=3, lr=0.0001, batch_size=args.batch_size, fold_no=args.cv_fold, 
+
+
+    trainingObject=TrainModel(input_size=input_size, output_size=output_size, 
+                              epochs=3, lr=config['lr'], batch_size=args.batch_size, fold_no=config['cv_fold'],
                               loss_func=args.loss_func, seed=args.seed,config=config)
     model, ndcg1_val=trainingObject.train()
     test_ndcg1=trainingObject.test()
     print(f"Validation NDCG@1: {ndcg1_val}, Test NDCG@1: {test_ndcg1}")
     
     # save the model
-    torch.save(model.state_dict(), f'.metamodel_cvfold{args.cv_fold}_{args.loss_func}.pkl')
+    torch.save(model.state_dict(), f'best_metamodel_cvfold_{args.cv_fold}_loss_{args.loss_func}.pkl')
 
     # load_and_test(input_size, hidden_size, output_size)
     # train_xgboost()

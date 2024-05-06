@@ -90,8 +90,8 @@ class SurrogateWorker(Worker):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Optimize the metamodel')
-    parser.add_argument('--min_budget',   type=float, help='Minimum budget used during the optimization.', default=10)
-    parser.add_argument('--max_budget',   type=float, help='Maximum budget used during the optimization.', default=20)
+    parser.add_argument('--min_budget',   type=float, help='Minimum budget used during the optimization.', default=1)
+    parser.add_argument('--max_budget',   type=float, help='Maximum budget used during the optimization.', default=2)
     parser.add_argument('--n_iterations', type=int,   help='Number of iterations performed by the optimizer', default=2)
     parser.add_argument('--n_workers',    type=int,   help='Number of workers to run in parallel.', default=1)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help='Seed for the random number generator')
     parser.add_argument('--input_size', type=int, default=27, help='Input size of the model')
     parser.add_argument('--output_size', type=int, default=1, help='Output size of the model')
-    parser.add_argument('--loss_func', type=str, default='regression', help='loss function can be regression|bpr|hingeloss')
+    parser.add_argument('--loss_func', type=str, default='bpr', help='loss function can be regression|bpr|hingeloss')
     parser.add_argument('--batch_size', type=int, default=204, help='Batch size of the model')
     
     # sample command from terminal:
