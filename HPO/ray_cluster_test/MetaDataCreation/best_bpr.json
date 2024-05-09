@@ -1,0 +1,12 @@
+{
+    "cv_fold": 1,
+    "dropout_rate": 0.7015103306637684,
+    "lr": 0.000005135969983335287,
+    "min_lr": 3.364385374653254e-7,
+    "num_hidden_layers": 5,
+    "num_hidden_units": 425,
+    "optimizer_type": "SGD",
+    "scheduler_type": "CosineAnnealingWarmRestarts",
+    "weight_decay": 0.0000072540973417840435,
+    "sgd_momentum": 0.04240794281763762
+  }

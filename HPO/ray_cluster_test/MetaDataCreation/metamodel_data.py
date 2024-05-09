@@ -1,4 +1,5 @@
 # Handle the data for the metamodel. Convert the data to a format that the metamodel can understand based on the loss function.
+from re import X
 import pandas as pd
 import numpy as np
 import random
@@ -282,30 +283,64 @@ class OldTrainingDataCV():
         return self.train_loader, self.val_loader, self.test_loader
 
 
-class TestData():
-    def __init__(self, batch_size=32,seed=42):
+class TestData(Dataset):
+    def __init__(self, task_name, batch_size=32,seed=42):
         self.batch_size = batch_size
         self.seed=seed
         np.random.seed(seed)
         torch.manual_seed(seed)
+        self.create_data()
     
     def create_data(self):
-        test_data=pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018.csv')
+        test_data=pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018_fine.csv')
         # add a fake performance column with zeros
         
-        test_data['Performance'] = 0
-        test_data['Rank'] = 0
-        X_test, y_test = preprocess_data(test_data)
+        X_test = preprocess_data(test_data)
+        self.datasetnames = {'test':X_test['Dataset']}
+        self.pipelines = {'test':X_test['IncumbentOf']}
+        X_test = X_test.drop(columns=['Dataset', 'IncumbentOf'])
         X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
         test_dataset = TensorDataset(X_test_tensor)
+        self.x ={ 'test':X_test_tensor}
 
 
+class PredictionData(Dataset):
+    def __init__(self,task_name,batch_size=204, seed=42):
+        self.batch_size = batch_size
+        self.seed=seed
+        self.task_name = task_name
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        self.create_data()
+
+    
+    def create_data(self):
+        test_data=pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018_fine.csv')
+        # add a fake performance column with zeros
+        
+        X_test = preprocess_data(test_data)
+        self.datasetnames = {'test':X_test['Dataset']}
+        self.pipelines = {'test':X_test['IncumbentOf']}
+        X_test = X_test.drop(columns=['Dataset', 'IncumbentOf'])
+        self.x =torch.tensor(X_test.values, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, index):
+        x = self.x[index]
+        return x        
+    
 def  get_data_loader(batch_size, cv_fold, seed,loss_func="regression"):
     # get the data and create the data loaders
     training_data = TrainingDataCV(batch_size=batch_size, fold_no=cv_fold, seed=seed, loss_func=loss_func)
     train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)  
     return train_loader
     
+def get_predict_loader(task,batch_size, seed):
+    test_data = PredictionData(task_name=task,batch_size=batch_size, seed=seed)
+    test_loader = DataLoader(test_data, batch_size=batch_size)
+    return test_loader
 if __name__ == "__main__":
     # arg parser
     parser = argparse.ArgumentParser("Data Creation")
@@ -313,6 +348,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help='seed')
     parser.add_argument('--cv_fold', type=int, default=5, help='cv fold')
     parser.add_argument('--loss_func', type=str, default='hingeloss', help='loss function can be regression|bpr|hingeloss')
+    parser.add_argument('--task', type=str, default='train', help='germeval2018_fine')
     args = parser.parse_args()
     
-    datsetloader = get_data_loader(batch_size=args.batch_size, cv_fold=args.cv_fold, seed=args.seed, loss_func=args.loss_func)
+    # datsetloader = get_data_loader(batch_size=args.batch_size, cv_fold=args.cv_fold, seed=args.seed, loss_func=args.loss_func)
+    test_loader = get_predict_loader(task=args.task, batch_size=args.batch_size, seed=args.seed)

@@ -349,7 +349,7 @@ if __name__ == "__main__":
 
 
 
-    trainingObject=TrainModel(input_size=input_size, output_size=output_size, 
+    trainingObject=TrainModel(input_size=input_size,patience=args.patience, output_size=output_size, 
                               epochs=3, lr=config['lr'], batch_size=args.batch_size, fold_no=config['cv_fold'],
                               loss_func=args.loss_func, seed=args.seed,config=config)
     model, ndcg1_val=trainingObject.train()
