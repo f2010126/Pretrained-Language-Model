@@ -30,13 +30,15 @@ except ImportError:
 
 
 class RayWorker(Worker):
-    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", seed=42, num_gpu=8, **kwargs):
+    def __init__(self, *args, data_dir="./", log_dir="./", task_name="sentilex", seed=42, num_gpu=8,aug=False,
+                  **kwargs):
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir  # mostly HPO/ray_cluster_test/BoHBCode/tokenized_data
         self.log_dir = log_dir  # mostly HPO/ray_cluster_test/BoHBCode/datasetruns/RUN_NAME
         self.task = task_name
         self.seed = seed
         self.gpus = num_gpu
+        self.aug = aug # if augmented data is used
         if ray.is_initialized():
             print('Ray is initialized')
         else:
@@ -63,6 +65,7 @@ class RayWorker(Worker):
         config['run_id'] = self.run_id
         config['trial_id'] = str(uuid.uuid4().hex)[:5]
         config['seed'] = self.seed
+        config['aug'] = self.aug
 
         trainer = TorchTrainer(transformer_train_function,
                                scaling_config=scaling_config,
@@ -164,7 +167,7 @@ if __name__ == "__main__":
     parser.add_argument('--previous_run', type=str, default=None,
                         help='Path to the directory of the previous run. Prev run is assumed to be in the same '
                              'working dir as current')
-
+    parser.add_argument('--aug', help='Flag to use the Augmented datasets', action='store_true')
 
     args = parser.parse_args()
 
@@ -175,13 +178,17 @@ if __name__ == "__main__":
     # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), args.shared_directory, args.run_id)
     os.makedirs(working_dir, exist_ok=True)
-
     data_dir = os.path.join(os.getcwd(), 'tokenized_data')
+    if args.aug:
+        # Augmented data goes directly to the tokenized_data folder
+        data_dir = os.path.join(os.getcwd(), 'tokenized_data', 'Augmented', args.task_name)
+
+
 
     if args.worker:
         time.sleep(5)  # short artificial delay to make sure the nameserver is already running
         w = RayWorker(run_id=args.run_id, host=host, timeout=3000, task_name=args.task_name,
-                      log_dir=working_dir, num_gpu=args.num_gpu, data_dir=data_dir)
+                      log_dir=working_dir, num_gpu=args.num_gpu, data_dir=data_dir, aug=args.aug)
         # increase timeout to 1 hour
         w.load_nameserver_credentials(working_directory=working_dir)
         w.run(background=False)
@@ -201,7 +208,7 @@ if __name__ == "__main__":
     # comment out for now.
 
     w = RayWorker(run_id=args.run_id, host=host, nameserver=ns_host, nameserver_port=ns_port, timeout=3000,
-                  data_dir=data_dir, task_name=args.task_name, log_dir=working_dir, num_gpu=args.num_gpu)
+                  data_dir=data_dir, task_name=args.task_name, log_dir=working_dir, num_gpu=args.num_gpu, aug=args.aug)
     # increase timeout to 1 hour
     w.run(background=True)
 

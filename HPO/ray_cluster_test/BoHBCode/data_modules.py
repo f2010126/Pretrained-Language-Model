@@ -150,8 +150,7 @@ class DataModule(LightningDataModule):
             self.task_metadata = metadata or self.task_metadata
         except:
             logging.debug("The tokenised data file not exist")
-            #self.prepare_data()
-            self.prepare_raw_data()
+            # dm.prepare_raw_data() # augmenetd have no raw
             self.prepare_data()
             self.dataset = torch.load(f'{self.dir_path}/{self.tokenised_file}')
             with open(os.path.join(self.dir_path, 'metadata.json'), "r") as file:
@@ -1610,6 +1609,7 @@ def get_datamodule(task_name="", model_name_or_path: str = "distilbert-base-unca
     elif task_name == "augmented":
         # extract task name from the data_dir. tokenized_datasets/Augmented/Bundestag-v2_1X_4Labels
         task = os.path.basename(data_dir)
+        # parent_directory, task = os.path.split(data_dir)
         return AugmentedDataset(model_name_or_path=model_name_or_path, max_seq_length=max_seq_length,
                                 train_batch_size=train_batch_size, eval_batch_size=eval_batch_size, 
                                 data_dir=data_dir, task_name=task, tokenize_folder_name=task)
@@ -1643,10 +1643,10 @@ def tokenise_datasets():
 if __name__ == "__main__":
     # get recursive folder paths from under cleaned/Augmented/, call the datamodule with the task name augmented
 
-    # data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
-    data_dir = os.path.join(os.getcwd(), "tokenized_data", "senti_lex")
-    for name in ["senti_lex"]:
-        dm = get_datamodule(task_name="augmented", model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
+    data_dir = os.path.join(os.getcwd(), "tokenized_data", "Augmented", "tagesschau_1X_4Labels")
+    # data_dir = os.path.join(os.getcwd(), "tokenized_data")
+    for name in ["Augmented"]:
+        dm = get_datamodule(task_name=name, model_name_or_path="dbmdz/distilbert-base-german-europeana-cased",
                             max_seq_length=128,
                             train_batch_size=32, eval_batch_size=32, data_dir=data_dir)
         # dm.prepare_raw_data()

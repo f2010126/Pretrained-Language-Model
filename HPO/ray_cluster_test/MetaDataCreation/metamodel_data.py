@@ -1,4 +1,6 @@
 # Handle the data for the metamodel. Convert the data to a format that the metamodel can understand based on the loss function.
+from ast import parse
+from os import path
 from re import X
 import pandas as pd
 import numpy as np
@@ -10,7 +12,6 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-
 
 
 def preprocess_data(training_set):
@@ -305,17 +306,18 @@ class TestData(Dataset):
 
 
 class PredictionData(Dataset):
-    def __init__(self,task_name,batch_size=204, seed=42):
+    def __init__(self,task_name,batch_size=204, seed=42, t_path='/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018_fine.csv'):
         self.batch_size = batch_size
         self.seed=seed
         self.task_name = task_name
+        self.t_path = t_path
         np.random.seed(seed)
         torch.manual_seed(seed)
         self.create_data()
 
     
     def create_data(self):
-        test_data=pd.read_csv('/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018_fine.csv')
+        test_data=pd.read_csv(self.t_path)
         # add a fake performance column with zeros
         
         X_test = preprocess_data(test_data)
@@ -337,8 +339,8 @@ def  get_data_loader(batch_size, cv_fold, seed,loss_func="regression"):
     train_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True)  
     return train_loader
     
-def get_predict_loader(task,batch_size, seed):
-    test_data = PredictionData(task_name=task,batch_size=batch_size, seed=seed)
+def get_predict_loader(task,batch_size, seed, t_path):
+    test_data = PredictionData(task_name=task,batch_size=batch_size, seed=seed, t_path=t_path)
     test_loader = DataLoader(test_data, batch_size=batch_size)
     return test_loader
 if __name__ == "__main__":
@@ -349,7 +351,8 @@ if __name__ == "__main__":
     parser.add_argument('--cv_fold', type=int, default=5, help='cv fold')
     parser.add_argument('--loss_func', type=str, default='hingeloss', help='loss function can be regression|bpr|hingeloss')
     parser.add_argument('--task', type=str, default='train', help='germeval2018_fine')
+    parser.add_argument('--data_path', type=str, default="/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/HPO/ray_cluster_test/MetaDataCreation/test_germeval2018_fine.csv")
     args = parser.parse_args()
     
     # datsetloader = get_data_loader(batch_size=args.batch_size, cv_fold=args.cv_fold, seed=args.seed, loss_func=args.loss_func)
-    test_loader = get_predict_loader(task=args.task, batch_size=args.batch_size, seed=args.seed)
+    test_loader = get_predict_loader(task=args.task, batch_size=args.batch_size, seed=args.seed, t_path=args.data_path)
