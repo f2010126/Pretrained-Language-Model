@@ -25,8 +25,14 @@ export CUDA_LAUNCH_BLOCKING=1
 export TOKENIZERS_PARALLELISM=False
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export TORCH_SHOW_CPP_STACKTRACES=1
+
+# clear the ray results folder
+
+
+# set up env
 source ~/ray_env/bin/activate
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/BoHBCode
+
 
 # ray setup
 echo "Ray setup"
@@ -74,7 +80,7 @@ echo "Ray setup complete"
 # run the script. A runner function will start the master and workers with popen. Debug outputs will be saved in respective log files. 
 python3 bohb_runner.py --max_budget MAX_BUDGET --n_iterations NUM_ITER \
 --n_workers NUM_WORKER --run_id RUN_ID --shared_directory datasetruns \
---task DATASET_TO_OPTIMSE --eta bohb_eta --num_gpu GPU_WORKERS --prev_run PREV_RUN --aug AUGMENTATION
+--task DATASET_TO_OPTIMSE --eta bohb_eta --num_gpu GPU_WORKERS --prev_run PREV_RUN AUGMENTATION
 wait
 echo 'End of Script'
 

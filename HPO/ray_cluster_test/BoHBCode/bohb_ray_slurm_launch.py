@@ -130,7 +130,10 @@ if __name__ == "__main__":
     text = text.replace(W_GPU, w_gpu)
     text = text.replace(WORKERS, num_workers)
     text = text.replace(PREV_RUN_ID, args.prev_run)
-    text = text.replace("AUGMENTATION", str(args.aug))
+    if args.aug:
+        text = text.replace("AUGMENTATION", "--aug")
+    else:
+        text = text.replace("AUGMENTATION", "")
 
     # ===== Save the script =====
     script_file = "{}.sh".format(job_name)
