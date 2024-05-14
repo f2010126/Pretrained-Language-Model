@@ -40,6 +40,7 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
     seed_everything(9)
 
     # set up data and model
+    # data_dir should be the location of the tokenised dataset
     dm = get_datamodule(task_name=task_name, model_name_or_path=config['model_config']['model'],
                         max_seq_length=config['model_config']['dataset']['seq_length'],
                         train_batch_size=config['model_config']['dataset']['batch'],
@@ -111,14 +112,7 @@ def train_single_config(config, task_name='gnad10', budget=1, data_dir='./cleane
         # traceback.print_exc()
         return {"end_time": 0, "metrics": {'test_f1_epoch': 0.0}, "budget": budget, }
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Evaluate a Single Config')
-    parser.add_argument('--model-name', type=str,
-                        default="bert-base-german-cased", help='Task name')
-    parser.add_argument('--budget', type=int, default=1, help='Budget')
-
-    args = parser.parse_args()
+def evaluate(args):
     sample_config = {'adam_epsilon': 7.648065011196061e-08,
                      'gradient_accumulation_steps': 8,
                      'gradient_clip_algorithm': 'norm',
@@ -172,6 +166,53 @@ if __name__ == "__main__":
         with open(output_file, 'w') as file:
             # write text to data
             file.write(str(output))
+
+def run_aug():
+    config={
+    'seed': 42,
+    'incumbent_for': 'miam_1X_10Labels',
+    'model_config': {
+        'model': 'bert-base-uncased',
+        'optimizer': {
+            'type': 'RAdam',
+            'lr': 6.146670783169018e-05,
+            'momentum': 0.9,
+            'scheduler': 'cosine_with_warmup',
+            'weight_decay': 6.265835646508776e-05,
+            'adam_epsilon': 8.739737941142407e-08
+        },
+        'training': {
+            'warmup': 100,
+            'gradient_accumulation': 4
+        },
+        'dataset': {
+            'name': 'miam_1X_10Labels',
+            'seq_length': 512,
+            'batch': 8,
+            'num_training_samples': 9935,
+            'average_text_length': 6.091092098641168,
+            'num_labels': 10
+        }
+    },
+    'aug': True,
+    'run_info': [],}
+
+    data_dir="/Users/diptisengupta/Desktop/CODEWORK/GitHub/WS2022/Pretrained-Language-Model/tokenized_data/Augmented/miam_1X_10Labels"
+
+    return_val=train_single_config(config, task_name='augmented', budget=1, data_dir=data_dir, train=True)
+    print(return_val)
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Evaluate a Single Config')
+    parser.add_argument('--model-name', type=str,
+                        default="bert-base-german-cased", help='Task name')
+    parser.add_argument('--budget', type=int, default=1, help='Budget')
+
+    args = parser.parse_args()
+    # evaluate(args)
+    run_aug()
 
 # GNAD10 batch size 8 takes 115 s per epoch
 # MTOP batch size 8 takes 264 s per epoch

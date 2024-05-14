@@ -27,6 +27,7 @@ if __name__ == "__main__":
     parser.add_argument('--eta', type=int, help='Eta value for BOHB', default=2)
     parser.add_argument('--num_gpu', type=int, help='Number of GPUs to use', default=8)
     parser.add_argument('--prev_run', type=str, help='Previous run id, if any.', default='None')
+    parser.add_argument('--aug', help='Flag to use the Augmented datasets', action='store_true')
 
     args = parser.parse_args()
 
@@ -46,6 +47,11 @@ if __name__ == "__main__":
                      ' --task {}'.format(args.task) + ' --eta {}'.format(args.eta) + ' --num_gpu {}'.format(
         args.num_gpu) + \
                      ' --previous_run {}'.format(args.prev_run)
+    
+    # if args.aug add --aug flag
+    if args.aug:
+        master_command += ' --aug'
+
     worker_command = master_command + ' --worker'
 
     master_proc = subprocess.Popen(master_command, shell=True, stdout=m_op, stderr=m_debugr)

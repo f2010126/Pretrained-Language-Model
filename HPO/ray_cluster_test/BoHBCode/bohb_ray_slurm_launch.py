@@ -79,6 +79,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_iter", type=int, default=1, help="Number of iterations of the BOHB")
     parser.add_argument("--w_gpu", type=int, default=0, help="Number of GPUs used by each trial")
     parser.add_argument("--prev_run", type=str, default="None", help="Run ID of the previous run")
+    parser.add_argument('--aug', help='Flag to use the Augmented datasets', action='store_true')
 
     args = parser.parse_args()
 
@@ -129,6 +130,7 @@ if __name__ == "__main__":
     text = text.replace(W_GPU, w_gpu)
     text = text.replace(WORKERS, num_workers)
     text = text.replace(PREV_RUN_ID, args.prev_run)
+    text = text.replace("AUGMENTATION", str(args.aug))
 
     # ===== Save the script =====
     script_file = "{}.sh".format(job_name)

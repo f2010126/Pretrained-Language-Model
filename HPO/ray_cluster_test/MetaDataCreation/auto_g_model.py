@@ -25,7 +25,7 @@ def train():
 def test_model(seed=42):
     label = 'Performance'
     predictor = TabularPredictor.load("AutogluonModels/ag-20240423_172315")
-    test_data = TabularDataset(f'test_germeval2018.csv')
+    test_data = TabularDataset(f'test_germeval2018_fine.csv')
     y_pred = predictor.predict(test_data.drop(columns=["Rank"]))
     max_index = y_pred.idxmax()
     # model name

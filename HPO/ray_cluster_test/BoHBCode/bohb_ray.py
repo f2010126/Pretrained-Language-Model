@@ -56,7 +56,7 @@ def transformer_train_function(config):
      # [4] Build your datasets on each worker
     print(f'data dir-----> {config["data_dir"]}')
     if config['aug']==True:
-        config['task']='Augmented'
+        config['task']='augmented'
 
     dm = get_datamodule(task_name=config['task'], model_name_or_path=config['model_name_or_path'],
                             max_seq_length=config['max_seq_length'],
@@ -188,6 +188,7 @@ if __name__ == "__main__":
                  'max_seq_length': 128, 'per_device_train_batch_size': 8,
                 # 'per_device_eval_batch_size': 8, 
                 'data_dir': '.', 
+                'aug': False, # if True, use augmented dataset
                 'task': "mtop_domain", 
                 'model_name_or_path': 'bert-base-uncased', 
                 'log': '.',
@@ -198,6 +199,11 @@ if __name__ == "__main__":
                  'run_id': 'test_run',
                  'seed': 42,
                 'trial_id': str(uuid.uuid4().hex)[:5] }
+    test_config.update({'run_id': 'test_run',
+                        'aug': False, # if True, use augmented dataset
+                        'task': "mtop_domain", 
+                        
+                        })
 
     # where all the run artifacts are kept
     working_dir = os.path.join(os.getcwd(), "ddp_debug", test_config['run_id'])
@@ -206,9 +212,10 @@ if __name__ == "__main__":
     # central location for the datasets
     test_config['data_dir'] = os.path.join(os.getcwd(), "tokenized_data")
     os.makedirs(test_config['data_dir'], exist_ok=True)
-
-    scaling_config = ScalingConfig(num_workers=2, use_gpu=True,resources_per_worker={"CPU": 2, "GPU": 1})
-
+    
+    # scaling_config = ScalingConfig(num_workers=2, use_gpu=True,resources_per_worker={"CPU": 2, "GPU": 1})
+    # cpu scaling
+    scaling_config = ScalingConfig(num_workers=2, use_gpu=False,resources_per_worker={"CPU": 2})  
     # [5] Launch distributed training job.
     trainer = TorchTrainer(transformer_train_function, scaling_config=scaling_config, train_loop_config=test_config)
     result = trainer.fit()

@@ -1483,7 +1483,8 @@ class AugmentedDataset(DataModule):
             data_dir='./data/tokenized_datasets/Augmented', # has to be the exact path to the tokenized data file. 
 
             **kwargs,
-    ):
+    ):  
+        super().__init__()
         self.prepare_data_per_node = True
         self.n_cpu = 0
         self.task_metadata['task_name'] = task_name
