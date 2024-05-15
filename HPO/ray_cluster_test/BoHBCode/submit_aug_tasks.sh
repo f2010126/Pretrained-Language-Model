@@ -19,7 +19,7 @@
 source ~/ray_env/bin/activate
 cd $(ws_find zap_hpo_og)/TinyBert/HPO/ray_cluster_test/BoHBCode
 
-filtered_tasks=$(grep '^miam_1X_' dataset.txt)
+filtered_tasks=$(grep 'miam_1X_' datasets.txt)
 
 # Loop through each filtered task name
 while IFS= read -r task_name; do
