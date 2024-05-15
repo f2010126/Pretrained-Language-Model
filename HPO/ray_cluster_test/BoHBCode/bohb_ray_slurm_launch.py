@@ -143,6 +143,7 @@ if __name__ == "__main__":
     # ===== Submit the job =====
     print("Starting to submit job!")
     submitted_process=subprocess.Popen(["sbatch", script_file], preexec_fn=os.setsid)
+    submitted_process.communicate()  # Wait for the subprocess to finish
     print(
         "Job submitted! Script file is at: <{}>. Log file is at: <{}>".format(
             script_file, "{}.log".format(job_name)

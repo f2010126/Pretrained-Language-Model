@@ -10,7 +10,7 @@ import time
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process Executer for BoHB')
-    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=1)
+    parser.add_argument('--min_budget', type=float, help='Minimum budget used during the optimization.', default=2)
     parser.add_argument('--max_budget', type=float, help='Maximum budget used during the optimization.', default=5)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=2)
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
